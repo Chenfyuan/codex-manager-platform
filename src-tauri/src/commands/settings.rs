@@ -282,17 +282,11 @@ pub fn toggle_spotlight(app: tauri::AppHandle) -> Result<(), String> {
             let _ = main.hide();
         }
         let url = WebviewUrl::App("index.html?spotlight=1".into());
-        let win = WebviewWindowBuilder::new(&app, "spotlight", url)
+        let builder = WebviewWindowBuilder::new(&app, "spotlight", url)
             .title("")
             .inner_size(400.0, 480.0)
             .resizable(false)
             .decorations(true)
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition {
-                x: -20.0,
-                y: -20.0,
-            }))
             .transparent(true)
             .always_on_top(true)
             .center()
@@ -302,7 +296,18 @@ pub fn toggle_spotlight(app: tauri::AppHandle) -> Result<(), String> {
                 state: Some(tauri::window::EffectState::FollowsWindowActiveState),
                 radius: Some(10.0),
                 color: None,
-            })
+            });
+
+        #[cfg(target_os = "macos")]
+        let builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition {
+                x: -20.0,
+                y: -20.0,
+            }));
+
+        let win = builder
             .build()
             .map_err(|e| format!("创建窗口失败: {}", e))?;
         win.set_focus().map_err(|e| e.to_string())?;
