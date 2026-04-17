@@ -60,14 +60,14 @@
     "longDescription": "管理多个 OpenAI Codex 编程代理账号，支持 API Key 和 OAuth 认证，实时任务监控，会话历史持久化。",
     "category": "DeveloperTool",
     "copyright": "Copyright 2026",
-    "createUpdaterArtifacts": "v1Compatible"
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {
       "endpoints": [
         "https://github.com/Chenfyuan/codex-manager-platform/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzQjEzMDcyNjZBMzhEMDIKUldRQ2phTm1jakN4STlIZExFYUFlU0pQSzlORFVEZVV4MmVKNkw5My8zdnlSTEt1dVNzdlNiSk4K"
     }
   }
 }

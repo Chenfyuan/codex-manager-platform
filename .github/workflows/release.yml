@@ -21,10 +21,10 @@ jobs:
         include:
           - platform: macos-14
             display_name: macOS Apple Silicon
-            args: "--target aarch64-apple-darwin --bundles dmg"
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
           - platform: macos-13
             display_name: macOS Intel
-            args: "--target x86_64-apple-darwin --bundles dmg"
+            args: "--target x86_64-apple-darwin --bundles app,dmg"
           - platform: ubuntu-22.04
             display_name: Linux
             args: "--bundles appimage,deb"
@@ -83,6 +83,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
           tagName: v__VERSION__
@@ -90,7 +92,7 @@ jobs:
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
-          uploadUpdaterJson: false
+          uploadUpdaterJson: true
           releaseBody: |
             Automated multi-platform bundles for Codex Manager.
 
@@ -98,4 +100,4 @@ jobs:
             - macOS: DMG
             - Windows: NSIS and MSI
             - Linux: AppImage and Debian package
-          args: "${{ matrix.args }} --config src-tauri/tauri.release.conf.json"
+          args: ${{ matrix.args }}

@@ -84,6 +84,7 @@ e2e/                 Playwright 端到端测试
 - 在推送 `v*` 标签时自动触发
 - 也支持手动触发 `workflow_dispatch`
 - 自动构建并上传这些安装包到 GitHub Release
+- 自动生成 updater 所需的签名更新包和 `latest.json`
 - macOS：`dmg`
 - Windows：`nsis`、`msi`
 - Linux：`AppImage`、`deb`
@@ -97,13 +98,18 @@ git push origin v0.1.0
 
 ### 更新器说明
 
-当前仓库已经把更新地址指向 GitHub Releases，但 Tauri 自动更新仍然需要签名公钥与对应私钥发布流程才能真正上线使用。
+当前仓库已经把更新地址指向 GitHub Releases，并已接入基于 GitHub Actions 的签名发布流程。
 
 也就是说：
 
 - `检查更新` 按钮的代码链路已存在
-- 当前 `release.yml` 为了优先保证多平台安装包可以稳定产出，使用了 `src-tauri/tauri.release.conf.json` 关闭 updater artifact 生成
-- 真正发布自动更新前，还需要补齐 Tauri updater signing secrets，并把发布流程切回带签名的 updater 构建
+- GitHub Release 工作流会生成 updater 所需的 `latest.json` 和签名产物
+- 当前仓库依赖这两个 GitHub Secrets 进行签名：
+  - `TAURI_SIGNING_PRIVATE_KEY`
+  - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- 如果未来需要轮换密钥，必须同时更新：
+  - GitHub Secrets 中的私钥与密码
+  - `src-tauri/tauri.conf.json` 中的 `plugins.updater.pubkey`
 
 ---
 
@@ -187,6 +193,7 @@ The repository also includes a release workflow at `.github/workflows/release.ym
 - triggered automatically on pushed `v*` tags
 - also supports manual `workflow_dispatch`
 - builds and uploads these installers to a GitHub Release
+- generates signed updater artifacts and `latest.json`
 - macOS: `dmg`
 - Windows: `nsis`, `msi`
 - Linux: `AppImage`, `deb`
@@ -200,10 +207,13 @@ git push origin v0.1.0
 
 ### Updater Notes
 
-The updater endpoint now points to GitHub Releases for this repository, but production auto-update still requires a Tauri signing public key and the matching private-key release pipeline.
+The updater endpoint now points to GitHub Releases for this repository, and the release workflow is wired to produce signed updater artifacts.
 
 In practice:
 
 - the `Check for updates` UI flow exists
-- `release.yml` currently uses `src-tauri/tauri.release.conf.json` to disable updater artifact generation so multi-platform installers can be built reliably right now
-- release-grade auto-update is not complete until updater signing secrets are configured and the release flow is switched back to signed updater bundles
+- the GitHub Release workflow generates `latest.json` and signed updater bundles
+- the repository depends on these GitHub Secrets for signing:
+  - `TAURI_SIGNING_PRIVATE_KEY`
+  - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- if you rotate the signing key, you must update both the GitHub Secrets and `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`
