@@ -92,7 +92,7 @@ jobs:
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           releaseBody: |
             Automated multi-platform bundles for Codex Manager.
 
