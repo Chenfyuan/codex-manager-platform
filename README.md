@@ -79,6 +79,22 @@ e2e/                 Playwright 端到端测试
 
 工作流文件位于 `.github/workflows/ci.yml`，会在 `push`、`pull_request` 和手动触发时运行。
 
+此外还包含一个发布工作流 `.github/workflows/release.yml`：
+
+- 在推送 `v*` 标签时自动触发
+- 也支持手动触发 `workflow_dispatch`
+- 自动构建并上传这些安装包到 GitHub Release
+- macOS：`dmg`
+- Windows：`nsis`、`msi`
+- Linux：`AppImage`、`deb`
+
+建议的发布方式：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ### 更新器说明
 
 当前仓库已经把更新地址指向 GitHub Releases，但 Tauri 自动更新仍然需要签名公钥与对应私钥发布流程才能真正上线使用。
@@ -86,7 +102,8 @@ e2e/                 Playwright 端到端测试
 也就是说：
 
 - `检查更新` 按钮的代码链路已存在
-- 真正发布自动更新前，还需要补齐 Tauri updater signing secrets
+- 当前 `release.yml` 为了优先保证多平台安装包可以稳定产出，使用了 `src-tauri/tauri.release.conf.json` 关闭 updater artifact 生成
+- 真正发布自动更新前，还需要补齐 Tauri updater signing secrets，并把发布流程切回带签名的 updater 构建
 
 ---
 
@@ -165,6 +182,22 @@ The repository includes a baseline CI workflow that runs:
 
 The workflow lives at `.github/workflows/ci.yml` and runs on `push`, `pull_request`, and `workflow_dispatch`.
 
+The repository also includes a release workflow at `.github/workflows/release.yml`:
+
+- triggered automatically on pushed `v*` tags
+- also supports manual `workflow_dispatch`
+- builds and uploads these installers to a GitHub Release
+- macOS: `dmg`
+- Windows: `nsis`, `msi`
+- Linux: `AppImage`, `deb`
+
+Recommended release flow:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ### Updater Notes
 
 The updater endpoint now points to GitHub Releases for this repository, but production auto-update still requires a Tauri signing public key and the matching private-key release pipeline.
@@ -172,4 +205,5 @@ The updater endpoint now points to GitHub Releases for this repository, but prod
 In practice:
 
 - the `Check for updates` UI flow exists
-- release-grade auto-update is not complete until updater signing secrets are configured
+- `release.yml` currently uses `src-tauri/tauri.release.conf.json` to disable updater artifact generation so multi-platform installers can be built reliably right now
+- release-grade auto-update is not complete until updater signing secrets are configured and the release flow is switched back to signed updater bundles
