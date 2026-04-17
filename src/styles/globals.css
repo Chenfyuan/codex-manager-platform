@@ -1,0 +1,385 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary-50: #eefbfc;
+  --color-primary-100: #d5f5f8;
+  --color-primary-200: #afe9f1;
+  --color-primary-300: #7edce9;
+  --color-primary-400: #38c8de;
+  --color-primary-500: #1db5c8;
+  --color-primary-600: #1893a6;
+  --color-primary-700: #187686;
+  --color-primary-800: #1b5f6d;
+  --color-primary-900: #1b4f5d;
+
+  --color-accent-400: #c4b5fd;
+  --color-accent-500: #a78bfa;
+  --color-accent-600: #8b5cf6;
+
+  --color-surface-0: #0b0c14;
+  --color-surface-1: #11121e;
+  --color-surface-2: #181928;
+  --color-surface-3: #1f2133;
+  --color-surface-4: #282a40;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #fb7185;
+}
+
+.light {
+  --color-surface-0: transparent;
+  --color-surface-1: rgba(248, 249, 250, 0.6);
+  --color-surface-2: rgba(241, 243, 245, 0.65);
+  --color-surface-3: rgba(229, 231, 235, 0.7);
+  --color-surface-4: rgba(209, 213, 219, 0.75);
+
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-error: #e11d48;
+}
+
+.light,
+.light body {
+  color: #1a1a1a;
+  background: #f8f9fa;
+}
+
+.light .text-neutral-200 { color: #1f2937; }
+.light .text-neutral-300 { color: #374151; }
+.light .text-neutral-400 { color: #6b7280; }
+.light .text-neutral-500 { color: #9ca3af; }
+.light .text-neutral-600 { color: #d1d5db; }
+.light .text-neutral-100 { color: #111827; }
+.light .border-neutral-700 { border-color: #d1d5db; }
+.light .border-neutral-800 { border-color: #e5e7eb; }
+.light .bg-neutral-950 { background-color: #ffffff; }
+.light .hover\:bg-surface-2:hover { background-color: #e9ecef; }
+.light .hover\:bg-surface-3:hover { background-color: #dee2e6; }
+.light .hover\:text-neutral-200:hover { color: #1f2937; }
+.light .hover\:text-neutral-300:hover { color: #374151; }
+.light .hover\:border-neutral-600:hover { border-color: #9ca3af; }
+.light .hover\:border-neutral-700:hover { border-color: #d1d5db; }
+.light .placeholder-neutral-500::placeholder { color: #9ca3af; }
+.light .text-white { color: #ffffff; }
+.light .bg-error\/20 { background-color: rgba(220, 38, 38, 0.12); }
+.light .hover\:bg-error\/30:hover { background-color: rgba(220, 38, 38, 0.18); }
+.light .hover\:border-error\/50:hover { border-color: rgba(220, 38, 38, 0.5); }
+.light .text-error { color: #e11d48; }
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* ===== Light mode: white-alpha → black-alpha conversions ===== */
+
+/* Borders */
+.light .border-white\/\[0\.06\] { border-color: rgba(0, 0, 0, 0.08); }
+.light .border-white\/\[0\.08\] { border-color: rgba(0, 0, 0, 0.10); }
+.light .border-white\/\[0\.15\] { border-color: rgba(0, 0, 0, 0.15); }
+.light .hover\:border-white\/\[0\.06\]:hover { border-color: rgba(0, 0, 0, 0.12); }
+.light .hover\:border-white\/\[0\.08\]:hover { border-color: rgba(0, 0, 0, 0.14); }
+.light .hover\:border-white\/\[0\.15\]:hover { border-color: rgba(0, 0, 0, 0.20); }
+
+/* Backgrounds */
+.light .bg-white\/\[0\.06\] { background-color: rgba(0, 0, 0, 0.04); }
+.light .bg-white\/\[0\.08\] { background-color: rgba(0, 0, 0, 0.06); }
+.light .hover\:bg-white\/\[0\.06\]:hover { background-color: rgba(0, 0, 0, 0.06); }
+.light .hover\:bg-white\/\[0\.08\]:hover { background-color: rgba(0, 0, 0, 0.08); }
+
+/* Active card glow for light mode */
+@keyframes pulse-glow-light {
+  0%, 100% { box-shadow: 0 0 8px rgba(6, 182, 212, 0.15), 0 1px 3px rgba(0, 0, 0, 0.08); }
+  50% { box-shadow: 0 0 20px rgba(6, 182, 212, 0.25), 0 1px 6px rgba(0, 0, 0, 0.10); }
+}
+.light .animate-pulse-glow {
+  animation: pulse-glow-light 2s ease-in-out infinite;
+}
+
+/* Toast colors for light mode */
+.light .border-emerald-400\/40 { border-color: rgba(16, 185, 129, 0.35); }
+.light .bg-emerald-500\/15 { background-color: rgba(16, 185, 129, 0.10); }
+.light .text-emerald-300 { color: #059669; }
+.light .border-rose-400\/40 { border-color: rgba(244, 63, 94, 0.35); }
+.light .bg-rose-500\/15 { background-color: rgba(244, 63, 94, 0.10); }
+.light .text-rose-300 { color: #e11d48; }
+.light .border-primary-400\/40 { border-color: rgba(6, 182, 212, 0.35); }
+.light .bg-primary-500\/15 { background-color: rgba(6, 182, 212, 0.10); }
+.light .text-primary-300 { color: #0891b2; }
+.light .text-primary-400 { color: #0e7490; }
+
+/* Card badge / plan label colors for light mode */
+.light .text-violet-300 { color: #7c3aed; }
+.light .bg-violet-500\/20 { background-color: rgba(139, 92, 246, 0.12); }
+.light .border-violet-400\/30 { border-color: rgba(139, 92, 246, 0.25); }
+.light .text-emerald-400 { color: #059669; }
+.light .text-sky-300, .light .text-sky-400 { color: #0284c7; }
+.light .bg-sky-500\/10 { background-color: rgba(14, 165, 233, 0.08); }
+.light .border-sky-400\/25 { border-color: rgba(14, 165, 233, 0.20); }
+.light .text-amber-300, .light .text-amber-400 { color: #d97706; }
+.light .bg-amber-500\/20 { background-color: rgba(245, 158, 11, 0.12); }
+.light .border-amber-400\/30 { border-color: rgba(245, 158, 11, 0.25); }
+.light .text-accent-400 { color: #7c3aed; }
+.light .bg-accent-500\/10 { background-color: rgba(139, 92, 246, 0.08); }
+.light .border-accent-400\/25 { border-color: rgba(139, 92, 246, 0.20); }
+
+/* Active card bg */
+.light .bg-primary-500\/\[0\.12\] { background-color: rgba(6, 182, 212, 0.08); }
+.light .border-primary-400\/40 { border-color: rgba(6, 182, 212, 0.30); }
+.light .hover\:bg-primary-500\/\[0\.04\]:hover { background-color: rgba(6, 182, 212, 0.04); }
+.light .hover\:border-primary-400\/30:hover { border-color: rgba(6, 182, 212, 0.25); }
+
+/* Exhausted card */
+.light .border-rose-500\/40 { border-color: rgba(244, 63, 94, 0.30); }
+.light .bg-rose-500\/\[0\.08\] { background-color: rgba(244, 63, 94, 0.06); }
+.light .hover\:border-rose-400\/50:hover { border-color: rgba(244, 63, 94, 0.40); }
+.light .hover\:bg-rose-500\/\[0\.12\]:hover { background-color: rgba(244, 63, 94, 0.08); }
+
+/* Gradient button shadows */
+.light .shadow-primary-600\/25 { --tw-shadow-color: rgba(8, 145, 178, 0.15); }
+.light .shadow-primary-500\/40 { --tw-shadow-color: rgba(6, 182, 212, 0.20); }
+.light .shadow-primary-500\/10 { --tw-shadow-color: rgba(6, 182, 212, 0.08); }
+.light .shadow-primary-500\/20 { --tw-shadow-color: rgba(6, 182, 212, 0.12); }
+.light .shadow-primary-500\/5 { --tw-shadow-color: rgba(6, 182, 212, 0.04); }
+.light .shadow-rose-500\/40 { --tw-shadow-color: rgba(244, 63, 94, 0.20); }
+.light .shadow-rose-500\/5 { --tw-shadow-color: rgba(244, 63, 94, 0.04); }
+
+/* Settings section colored left borders */
+.light .border-l-emerald-500\/50 { border-left-color: rgba(16, 185, 129, 0.50); }
+.light .border-l-accent-500\/50 { border-left-color: rgba(139, 92, 246, 0.50); }
+.light .border-l-primary-500\/50 { border-left-color: rgba(6, 182, 212, 0.50); }
+.light .border-l-violet-500\/50 { border-left-color: rgba(139, 92, 246, 0.50); }
+.light .border-l-amber-500\/50 { border-left-color: rgba(245, 158, 11, 0.50); }
+.light .border-l-rose-500\/50 { border-left-color: rgba(244, 63, 94, 0.50); }
+
+/* Toggle switch off state */
+.light .bg-neutral-700 { background-color: #d1d5db; }
+.light .bg-surface-4 { background-color: #d1d5db; }
+
+/* Icon backgrounds in stat cards / settings */
+.light .bg-primary-500\/15 { background-color: rgba(6, 182, 212, 0.10); }
+.light .bg-emerald-500\/15 { background-color: rgba(16, 185, 129, 0.10); }
+.light .bg-amber-500\/15 { background-color: rgba(245, 158, 11, 0.10); }
+.light .bg-violet-500\/15 { background-color: rgba(139, 92, 246, 0.10); }
+.light .bg-rose-500\/15 { background-color: rgba(244, 63, 94, 0.10); }
+
+/* Primary button variations */
+.light .bg-primary-600\/10 { background-color: rgba(8, 145, 178, 0.08); }
+.light .bg-primary-600\/15 { background-color: rgba(8, 145, 178, 0.10); }
+.light .bg-primary-500\/10 { background-color: rgba(6, 182, 212, 0.08); }
+
+/* Error chip bg */
+.light .bg-error\/\[0\.06\] { background-color: rgba(220, 38, 38, 0.06); }
+.light .text-error\/90 { color: rgba(225, 29, 72, 0.9); }
+.light .bg-error\/10 { background-color: rgba(220, 38, 38, 0.08); }
+
+/* Neutral text overrides for light readability */
+.light .text-neutral-600 { color: #9ca3af; }
+.light .text-neutral-500\/70 { color: rgba(107, 114, 128, 0.85); }
+.light .text-neutral-500\/60 { color: rgba(107, 114, 128, 0.75); }
+
+/* Quota bar remaining % colors */
+.light .text-rose-400 { color: #e11d48; }
+
+/* Chart SVG grid lines */
+.light .stroke-grid-line { stroke: #000; }
+
+/* Dialog select/option bg fix */
+.light select option { background-color: #f9fafb; color: #1a1a1a; }
+
+.light ::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+}
+
+.light ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+body {
+  overflow: hidden;
+  user-select: none;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+.light body,
+.light {
+  background: transparent;
+}
+
+html {
+  background: transparent;
+}
+
+.light html {
+  background: transparent;
+}
+
+/* Dark atmospheric background for main layout */
+.app-bg-dark {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(29, 181, 200, 0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, rgba(139, 92, 246, 0.04) 0%, transparent 60%),
+    #0b0c14;
+}
+
+.light .app-bg-dark {
+  background: rgba(248, 249, 250, 0.85);
+}
+
+/* Spotlight panel background */
+.spotlight-bg {
+  background: #11121e;
+}
+
+.light .spotlight-bg {
+  background: rgba(248, 249, 250, 0.92);
+}
+
+.light .dialog-card {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.10);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+.light .dialog-card .bg-surface-2 {
+  background: #f1f3f5;
+}
+
+.light .dialog-card .bg-surface-3 {
+  background: #e5e7eb;
+}
+
+.light .dialog-card {
+  border-left-color: rgba(0, 0, 0, 0.08);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+textarea {
+  user-select: text;
+}
+
+input {
+  user-select: text;
+}
+
+@keyframes slide-in-from-bottom-2 {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in.slide-in-from-bottom-2 {
+  animation: slide-in-from-bottom-2 0.2s ease-out;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(29, 181, 200, 0.15), 0 0 3px rgba(29, 181, 200, 0.08), inset 0 1px 0 rgba(255,255,255,0.03); }
+  50% { box-shadow: 0 0 20px rgba(29, 181, 200, 0.25), 0 0 6px rgba(29, 181, 200, 0.12), inset 0 1px 0 rgba(255,255,255,0.05); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+@keyframes spotlight-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes spotlight-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.92) translateY(8px);
+  }
+}
+
+.spotlight-enter {
+  animation: spotlight-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.spotlight-exit {
+  animation: spotlight-out 0.15s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.page-transition {
+  animation: page-enter 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.card-animate {
+  animation: card-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.card-animate:nth-child(1) { animation-delay: 0ms; }
+.card-animate:nth-child(2) { animation-delay: 30ms; }
+.card-animate:nth-child(3) { animation-delay: 60ms; }
+.card-animate:nth-child(4) { animation-delay: 90ms; }
+.card-animate:nth-child(5) { animation-delay: 120ms; }
+.card-animate:nth-child(6) { animation-delay: 150ms; }
+.card-animate:nth-child(7) { animation-delay: 180ms; }
+.card-animate:nth-child(8) { animation-delay: 210ms; }
+.card-animate:nth-child(9) { animation-delay: 240ms; }
+
+@keyframes fade-in-zoom {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-in.fade-in.zoom-in-95 {
+  animation: fade-in-zoom 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

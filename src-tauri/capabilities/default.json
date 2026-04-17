@@ -1,0 +1,38 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": ["main", "spotlight"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-visible",
+    "core:window:allow-is-focused",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "shell:allow-open",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "updater:default",
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "fs:allow-write-text-file",
+    "fs:allow-read-text-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$DOWNLOAD/**" }, { "path": "$DESKTOP/**" }, { "path": "$HOME/**" }]
+    }
+  ]
+}
