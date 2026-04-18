@@ -23,7 +23,7 @@ test.describe("设置页 - 主题切换", () => {
 
   test("显示版本号", async ({ mockPage: page }) => {
     await page.getByText("设置").click();
-    await expect(page.getByText("v0.1.0")).toBeVisible();
+    await expect(page.getByText("v0.1.2")).toBeVisible();
   });
 
   test("自动重连开关可点击", async ({ mockPage: page }) => {

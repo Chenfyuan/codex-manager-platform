@@ -651,7 +651,7 @@ export function SettingsView({
               </p>
             </div>
             <span className="rounded-md bg-surface-3 px-3 py-1 text-xs text-neutral-400">
-              v0.1.0
+              v0.1.2
             </span>
           </div>
           <div className="border-t border-white/[0.06]" />

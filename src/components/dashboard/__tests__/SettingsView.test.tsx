@@ -25,7 +25,7 @@ describe("SettingsView", () => {
 
   it("shows version", () => {
     render(<SettingsView open={true} onClose={onClose} />);
-    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("v0.1.2")).toBeInTheDocument();
   });
 
   it("renders three theme buttons", () => {

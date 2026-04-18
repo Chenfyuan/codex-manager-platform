@@ -62,7 +62,7 @@ pub fn rebuild_app_menu(app: &AppHandle) {
 
     let about_meta = AboutMetadata {
         name: Some("Codex 管理平台".into()),
-        version: Some("0.1.0".into()),
+        version: Some("0.1.2".into()),
         short_version: None,
         copyright: Some("Copyright © 2026".into()),
         credits: Some("一款纯 AI 字研的 Codex 账号管理平台".into()),
