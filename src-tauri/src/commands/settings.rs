@@ -1,6 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+#[cfg(target_os = "windows")]
+use serde::Deserialize;
 use std::process::Command;
-use tauri::{window::Color, Manager, State, WebviewUrl, WebviewWindowBuilder};
+#[cfg(not(target_os = "macos"))]
+use tauri::window::Color;
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::db;
 use crate::state::AppState;
@@ -99,12 +103,18 @@ pub struct CodexProcessInfo {
 
 #[tauri::command]
 pub fn get_codex_processes() -> Vec<CodexProcessInfo> {
-    if cfg!(target_os = "windows") {
-        return get_codex_processes_windows();
+    #[cfg(target_os = "windows")]
+    {
+        get_codex_processes_windows()
     }
-    get_codex_processes_unix()
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        get_codex_processes_unix()
+    }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn get_codex_processes_unix() -> Vec<CodexProcessInfo> {
     let pgrep = Command::new("pgrep").arg("-x").arg("codex").output();
     let pids: Vec<u32> = match pgrep {
@@ -212,6 +222,7 @@ fn should_include_windows_codex_process(command_line: &str) -> bool {
     true
 }
 
+#[cfg(target_os = "windows")]
 fn get_codex_processes_windows() -> Vec<CodexProcessInfo> {
     let script = r#"
 Get-CimInstance Win32_Process |
@@ -219,7 +230,9 @@ Get-CimInstance Win32_Process |
   Select-Object ProcessId, CommandLine |
   ConvertTo-Json -Compress
 "#;
-    let powershell = Command::new("powershell")
+    let mut powershell = Command::new("powershell");
+    crate::codex::cli::configure_background_command(&mut powershell);
+    let powershell = powershell
         .args(["-NoProfile", "-Command", script])
         .output();
     match powershell {
@@ -250,6 +263,7 @@ Get-CimInstance Win32_Process |
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn parse_etime(s: &str) -> u64 {
     let parts: Vec<&str> = s.split(':').collect();
     match parts.len() {

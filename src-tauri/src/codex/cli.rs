@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, Clone, Copy)]
 enum InvocationKind {
     Direct,
@@ -35,7 +38,7 @@ impl CodexCli {
     }
 
     pub fn std_command(&self) -> std::process::Command {
-        match self.invocation {
+        let mut command = match self.invocation {
             InvocationKind::Direct => std::process::Command::new(&self.path),
             InvocationKind::Cmd => {
                 let mut command = std::process::Command::new("cmd");
@@ -49,11 +52,13 @@ impl CodexCli {
                     .arg(&self.path);
                 command
             }
-        }
+        };
+        configure_background_command(&mut command);
+        command
     }
 
     pub fn tokio_command(&self) -> tokio::process::Command {
-        match self.invocation {
+        let mut command = match self.invocation {
             InvocationKind::Direct => tokio::process::Command::new(&self.path),
             InvocationKind::Cmd => {
                 let mut command = tokio::process::Command::new("cmd");
@@ -67,7 +72,9 @@ impl CodexCli {
                     .arg(&self.path);
                 command
             }
-        }
+        };
+        configure_background_tokio_command(&mut command);
+        command
     }
 
     pub fn shell_invocation(&self) -> String {
@@ -146,7 +153,9 @@ fn candidate_paths() -> Vec<PathBuf> {
 }
 
 fn command_output_paths(program: &str, args: &[&str]) -> Vec<PathBuf> {
-    let output = match std::process::Command::new(program).args(args).output() {
+    let mut command = std::process::Command::new(program);
+    configure_background_command(&mut command);
+    let output = match command.args(args).output() {
         Ok(output) if output.status.success() => output,
         _ => return Vec::new(),
     };
@@ -165,6 +174,28 @@ fn extend_paths(paths: &mut Vec<PathBuf>, new_paths: Vec<PathBuf>) {
             paths.push(path);
         }
     }
+}
+
+pub fn configure_background_command(command: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = command;
+}
+
+pub fn configure_background_tokio_command(command: &mut tokio::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = command;
 }
 
 #[cfg(target_os = "windows")]
