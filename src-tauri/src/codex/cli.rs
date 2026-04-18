@@ -6,6 +6,8 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[derive(Debug, Clone, Copy)]
 enum InvocationKind {
     Direct,
+    #[cfg(target_os = "macos")]
+    PosixShell,
     Cmd,
     PowerShell,
 }
@@ -24,11 +26,18 @@ impl CodexCli {
             .unwrap_or_default()
             .to_ascii_lowercase();
 
+        #[cfg(target_os = "macos")]
+        let invocation = InvocationKind::PosixShell;
+
+        #[cfg(target_os = "windows")]
         let invocation = match ext.as_str() {
             "cmd" | "bat" => InvocationKind::Cmd,
             "ps1" => InvocationKind::PowerShell,
             _ => InvocationKind::Direct,
         };
+
+        #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        let invocation = InvocationKind::Direct;
 
         Self { path, invocation }
     }
@@ -40,6 +49,14 @@ impl CodexCli {
     pub fn std_command(&self) -> std::process::Command {
         let mut command = match self.invocation {
             InvocationKind::Direct => std::process::Command::new(&self.path),
+            #[cfg(target_os = "macos")]
+            InvocationKind::PosixShell => {
+                let mut command = std::process::Command::new(preferred_posix_shell());
+                command
+                    .args(["-ilc", "exec \"$0\" \"$@\""])
+                    .arg(&self.path);
+                command
+            }
             InvocationKind::Cmd => {
                 let mut command = std::process::Command::new("cmd");
                 command.arg("/C").arg(&self.path);
@@ -60,6 +77,14 @@ impl CodexCli {
     pub fn tokio_command(&self) -> tokio::process::Command {
         let mut command = match self.invocation {
             InvocationKind::Direct => tokio::process::Command::new(&self.path),
+            #[cfg(target_os = "macos")]
+            InvocationKind::PosixShell => {
+                let mut command = tokio::process::Command::new(preferred_posix_shell());
+                command
+                    .args(["-ilc", "exec \"$0\" \"$@\""])
+                    .arg(&self.path);
+                command
+            }
             InvocationKind::Cmd => {
                 let mut command = tokio::process::Command::new("cmd");
                 command.arg("/C").arg(&self.path);
@@ -146,13 +171,25 @@ fn candidate_paths() -> Vec<PathBuf> {
         paths
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        command_output_paths("which", &["codex"])
+        let mut paths = Vec::new();
+        extend_paths(&mut paths, path_env_candidates("codex"));
+        extend_paths(&mut paths, common_macos_codex_paths());
+        extend_paths(&mut paths, command_output_paths("which", &["codex"]));
+        extend_paths(&mut paths, login_shell_output_paths("codex"));
+        paths
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let mut paths = path_env_candidates("codex");
+        extend_paths(&mut paths, command_output_paths("which", &["codex"]));
+        paths
     }
 }
 
-fn command_output_paths(program: &str, args: &[&str]) -> Vec<PathBuf> {
+fn command_output_paths(program: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Vec<PathBuf> {
     let mut command = std::process::Command::new(program);
     configure_background_command(&mut command);
     let output = match command.args(args).output() {
@@ -174,6 +211,82 @@ fn extend_paths(paths: &mut Vec<PathBuf>, new_paths: Vec<PathBuf>) {
             paths.push(path);
         }
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn path_env_candidates(binary: &str) -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(binary))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn common_macos_codex_paths() -> Vec<PathBuf> {
+    let mut paths = vec![
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+    ];
+
+    if let Some(home) = dirs::home_dir() {
+        paths.extend([
+            home.join(".local/bin/codex"),
+            home.join("bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".npm-global/bin/codex"),
+            home.join("Library/pnpm/codex"),
+            home.join(".asdf/shims/codex"),
+        ]);
+    }
+
+    paths
+}
+
+#[cfg(target_os = "macos")]
+fn login_shell_output_paths(binary: &str) -> Vec<PathBuf> {
+    let script = format!("which -a {} 2>/dev/null", quote_posix(binary));
+    let mut paths = Vec::new();
+
+    for shell in login_shell_candidates() {
+        extend_paths(
+            &mut paths,
+            command_output_paths(shell, &["-ilc", script.as_str()]),
+        );
+    }
+
+    paths
+}
+
+#[cfg(target_os = "macos")]
+fn login_shell_candidates() -> Vec<PathBuf> {
+    let mut shells = Vec::new();
+
+    if let Some(shell) = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+    {
+        shells.push(shell);
+    }
+
+    for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+        let path = PathBuf::from(shell);
+        if path.is_file() && !shells.iter().any(|existing| existing == &path) {
+            shells.push(path);
+        }
+    }
+
+    shells
+}
+
+#[cfg(target_os = "macos")]
+fn preferred_posix_shell() -> PathBuf {
+    login_shell_candidates()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| PathBuf::from("/bin/zsh"))
 }
 
 pub fn configure_background_command(command: &mut std::process::Command) {
