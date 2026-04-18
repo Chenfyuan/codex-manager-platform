@@ -85,6 +85,21 @@ vi.mock("@tauri-apps/plugin-os", () => ({
 
 vi.mock("@/lib/tauri", () => ({
   detectCodexCli: vi.fn().mockResolvedValue({ found: true, path: "/usr/bin/codex", version: "1.0.0" }),
+  getSettingsSnapshot: vi.fn().mockResolvedValue({
+    cliInfo: { found: true, path: "/usr/bin/codex", version: "1.0.0" },
+    adminKey: null,
+    quotaThreshold: 95,
+    notifyEnabled: true,
+    autoSwitchEnabled: true,
+    pollInterval: 300,
+    scheduleStrategy: "manual",
+    rules: [],
+  }),
+  getSettingsDiagnostics: vi.fn().mockResolvedValue({
+    dbSize: 1024,
+    historyCount: 0,
+    operationLogs: [],
+  }),
   getAccounts: vi.fn().mockResolvedValue([]),
   addAccount: vi.fn().mockResolvedValue({}),
   removeAccount: vi.fn().mockResolvedValue(undefined),

@@ -7,8 +7,33 @@ export interface CodexCliInfo {
   version: string | null;
 }
 
+export interface SettingsSnapshot {
+  cliInfo: CodexCliInfo;
+  adminKey: string | null;
+  quotaThreshold: number;
+  notifyEnabled: boolean;
+  autoSwitchEnabled: boolean;
+  pollInterval: number;
+  scheduleStrategy: import("./types").ScheduleStrategy;
+  rules: import("./types").ScheduleRule[];
+}
+
+export interface SettingsDiagnostics {
+  dbSize: number | null;
+  historyCount: number;
+  operationLogs: OperationLog[];
+}
+
 export async function detectCodexCli(): Promise<CodexCliInfo> {
   return invoke("detect_codex_cli");
+}
+
+export async function getSettingsSnapshot(): Promise<SettingsSnapshot> {
+  return invoke("get_settings_snapshot");
+}
+
+export async function getSettingsDiagnostics(operationLogLimit = 50): Promise<SettingsDiagnostics> {
+  return invoke("get_settings_diagnostics", { operationLogLimit });
 }
 
 export async function startOAuthLogin(): Promise<string> {

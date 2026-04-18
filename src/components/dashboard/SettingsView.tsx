@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { Sun, Moon, Monitor, Download, Upload, Loader2, Zap, BarChart3, Clock, Trash2, Plus, Key, ScrollText, Settings } from "lucide-react";
-import { detectCodexCli, type CodexCliInfo, exportAccounts, importAccountsFromBackup, getSetting, setSetting, getScheduleRules, addScheduleRule, removeScheduleRule, updateAccountPriority, cleanupOldData, getDbSize, getQuotaHistoryCount, getOperationLogs, clearOperationLogs } from "@/lib/tauri";
+import { type CodexCliInfo, exportAccounts, importAccountsFromBackup, getSettingsSnapshot, setSetting, addScheduleRule, removeScheduleRule, updateAccountPriority, cleanupOldData, getDbSize, getQuotaHistoryCount, clearOperationLogs, getSettingsDiagnostics } from "@/lib/tauri";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Drawer } from "@/components/ui/Drawer";
 import { useThemeStore } from "@/stores/themeStore";
@@ -13,6 +13,8 @@ const themeOptions = [
   { value: "dark" as const, label: "深色", icon: Moon },
   { value: "system" as const, label: "跟随系统", icon: Monitor },
 ];
+
+const SETTINGS_DEFERRED_LOAD_MS = 220;
 
 export function SettingsView({
   open,
@@ -47,20 +49,50 @@ export function SettingsView({
 
   useEffect(() => {
     if (!open) return;
-    detectCodexCli().then(setCliInfo).catch(() => {});
-    getSetting("openai_admin_key").then((v) => { if (v) { setAdminKey(v); setAdminKeySaved(true); } }).catch(() => {});
-    getSetting("quota_threshold").then((v) => { if (v) setThreshold(Number(v)); }).catch(() => {});
-    getSetting("notify_enabled").then((v) => { if (v) setNotifyEnabled(v === "true"); }).catch(() => {});
-    getSetting("auto_switch_enabled").then((v) => { if (v) setAutoSwitchEnabled(v === "true"); }).catch(() => {});
-    getSetting("poll_interval").then((v) => { if (v) setPollInterval(Number(v)); }).catch(() => {});
-    getSetting("schedule_strategy").then((v) => { if (v) setStrategy(v as ScheduleStrategy); }).catch(() => {});
-    getScheduleRules().then(setRules).catch(() => {});
-    import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
-      isEnabled().then(setAutoStartEnabled).catch(() => {});
-    }).catch(() => {});
-    getDbSize().then(setDbSize).catch(() => {});
-    getQuotaHistoryCount().then(setHistoryCount).catch(() => {});
-    getOperationLogs(50).then(setOpLogs).catch(() => {});
+    let cancelled = false;
+    const deferredLoadTimer = window.setTimeout(() => {
+      getSettingsDiagnostics(50)
+        .then((diagnostics) => {
+          if (cancelled) return;
+          startTransition(() => {
+            setDbSize(diagnostics.dbSize);
+            setHistoryCount(diagnostics.historyCount);
+            setOpLogs(diagnostics.operationLogs);
+          });
+        })
+        .catch(() => {});
+
+      import("@tauri-apps/plugin-autostart")
+        .then(({ isEnabled }) => isEnabled())
+        .then((enabled) => {
+          if (!cancelled) {
+            setAutoStartEnabled(enabled);
+          }
+        })
+        .catch(() => {});
+    }, SETTINGS_DEFERRED_LOAD_MS);
+
+    getSettingsSnapshot()
+      .then((snapshot) => {
+        if (cancelled) return;
+        startTransition(() => {
+          setCliInfo(snapshot.cliInfo);
+          setAdminKey(snapshot.adminKey ?? "");
+          setAdminKeySaved(Boolean(snapshot.adminKey?.trim()));
+          setThreshold(snapshot.quotaThreshold);
+          setNotifyEnabled(snapshot.notifyEnabled);
+          setAutoSwitchEnabled(snapshot.autoSwitchEnabled);
+          setPollInterval(snapshot.pollInterval);
+          setStrategy(snapshot.scheduleStrategy as ScheduleStrategy);
+          setRules(snapshot.rules);
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(deferredLoadTimer);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -659,13 +691,21 @@ export function SettingsView({
             <div>
               <p className="text-sm font-medium text-neutral-300">Codex CLI</p>
               <p className="text-xs text-neutral-500">
-                {cliInfo?.found
-                  ? cliInfo.path ?? "已检测到"
-                  : "未检测到 — npm install -g @openai/codex"}
+                {cliInfo == null
+                  ? "检测中..."
+                  : cliInfo.found
+                    ? cliInfo.path ?? "已检测到"
+                    : "未检测到 — npm install -g @openai/codex"}
               </p>
             </div>
-            <span className={`rounded-md px-3 py-1 text-xs font-medium ${cliInfo?.found ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"}`}>
-              {cliInfo?.found ? cliInfo.version ?? "已安装" : "未安装"}
+            <span className={`rounded-md px-3 py-1 text-xs font-medium ${
+              cliInfo == null
+                ? "bg-white/[0.06] text-neutral-400"
+                : cliInfo.found
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-rose-500/15 text-rose-400"
+            }`}>
+              {cliInfo == null ? "检测中" : cliInfo.found ? cliInfo.version ?? "已安装" : "未安装"}
             </span>
           </div>
           <div className="border-t border-white/[0.06]" />

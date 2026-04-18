@@ -468,6 +468,8 @@ pub fn run() {
             commands::threads::fetch_rate_limits,
             commands::threads::fetch_model_list,
             commands::settings::detect_codex_cli,
+            commands::settings::get_settings_snapshot,
+            commands::settings::get_settings_diagnostics,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::cleanup_old_data,

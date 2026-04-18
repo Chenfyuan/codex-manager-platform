@@ -2,12 +2,18 @@ use serde::Serialize;
 #[cfg(target_os = "windows")]
 use serde::Deserialize;
 use std::process::Command;
+use std::sync::{LazyLock, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 #[cfg(not(target_os = "macos"))]
 use tauri::window::Color;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::db;
 use crate::state::AppState;
+
+static CODEX_CLI_INFO_CACHE: LazyLock<StdMutex<Option<(Instant, CodexCliInfo)>>> =
+    LazyLock::new(|| StdMutex::new(None));
+const CODEX_CLI_INFO_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,8 +23,28 @@ pub struct CodexCliInfo {
     pub version: Option<String>,
 }
 
-#[tauri::command]
-pub fn detect_codex_cli() -> CodexCliInfo {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsSnapshot {
+    pub cli_info: CodexCliInfo,
+    pub admin_key: Option<String>,
+    pub quota_threshold: i64,
+    pub notify_enabled: bool,
+    pub auto_switch_enabled: bool,
+    pub poll_interval: i64,
+    pub schedule_strategy: String,
+    pub rules: Vec<crate::commands::schedule::ScheduleRule>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDiagnostics {
+    pub db_size: Option<u64>,
+    pub history_count: u64,
+    pub operation_logs: Vec<serde_json::Value>,
+}
+
+fn detect_codex_cli_uncached() -> CodexCliInfo {
     match crate::codex::cli::resolve_codex_cli() {
         Ok(cli) => {
             let version = cli
@@ -41,6 +67,95 @@ pub fn detect_codex_cli() -> CodexCliInfo {
             version: None,
         },
     }
+}
+
+fn detect_codex_cli_cached() -> CodexCliInfo {
+    let now = Instant::now();
+    if let Some((checked_at, info)) = CODEX_CLI_INFO_CACHE.lock().unwrap().clone() {
+        if now.duration_since(checked_at) <= CODEX_CLI_INFO_CACHE_TTL {
+            return info;
+        }
+    }
+
+    let info = detect_codex_cli_uncached();
+    *CODEX_CLI_INFO_CACHE.lock().unwrap() = Some((now, info.clone()));
+    info
+}
+
+fn read_bool_setting(conn: &rusqlite::Connection, key: &str, default: bool) -> bool {
+    db::get_setting(conn, key)
+        .map(|value| value == "true")
+        .unwrap_or(default)
+}
+
+fn read_i64_setting(conn: &rusqlite::Connection, key: &str, default: i64) -> i64 {
+    db::get_setting(conn, key)
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(default)
+}
+
+#[tauri::command]
+pub fn detect_codex_cli() -> CodexCliInfo {
+    detect_codex_cli_cached()
+}
+
+#[tauri::command]
+pub fn get_settings_snapshot(state: State<'_, AppState>) -> Result<SettingsSnapshot, String> {
+    let cli_info = detect_codex_cli_cached();
+
+    let conn = state.db.lock().unwrap();
+    let rules = db::get_schedule_rules(&conn)?
+        .into_iter()
+        .map(
+            |(id, account_id, start_hour, end_hour, days, enabled)| crate::commands::schedule::ScheduleRule {
+                id,
+                account_id,
+                start_hour,
+                end_hour,
+                days,
+                enabled,
+            },
+        )
+        .collect();
+
+    Ok(SettingsSnapshot {
+        cli_info,
+        admin_key: db::get_setting(&conn, "openai_admin_key"),
+        quota_threshold: read_i64_setting(&conn, "quota_threshold", 95),
+        notify_enabled: read_bool_setting(&conn, "notify_enabled", true),
+        auto_switch_enabled: read_bool_setting(&conn, "auto_switch_enabled", true),
+        poll_interval: read_i64_setting(&conn, "poll_interval", 300),
+        schedule_strategy: db::get_setting(&conn, "schedule_strategy")
+            .unwrap_or_else(|| "manual".to_string()),
+        rules,
+    })
+}
+
+#[tauri::command]
+pub fn get_settings_diagnostics(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    operation_log_limit: Option<i64>,
+) -> Result<SettingsDiagnostics, String> {
+    let db_size = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("codex-manager.db"))
+        .and_then(|path| std::fs::metadata(path).ok())
+        .map(|meta| meta.len());
+
+    let conn = state.db.lock().unwrap();
+    let history_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM quota_history", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    let operation_logs = db::get_operation_logs(&conn, operation_log_limit.unwrap_or(50))?;
+
+    Ok(SettingsDiagnostics {
+        db_size,
+        history_count: history_count as u64,
+        operation_logs,
+    })
 }
 
 #[tauri::command]

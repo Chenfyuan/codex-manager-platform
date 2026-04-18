@@ -3,16 +3,25 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsView } from "@/components/dashboard/SettingsView";
 import { useThemeStore } from "@/stores/themeStore";
-import { detectCodexCli } from "@/lib/tauri";
+import { getSettingsSnapshot } from "@/lib/tauri";
 
-const mockDetect = vi.mocked(detectCodexCli);
+const mockSnapshot = vi.mocked(getSettingsSnapshot);
 
 describe("SettingsView", () => {
   const onClose = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDetect.mockResolvedValue({ found: true, path: "/usr/bin/codex", version: "1.0.0" });
+    mockSnapshot.mockResolvedValue({
+      cliInfo: { found: true, path: "/usr/bin/codex", version: "1.0.0" },
+      adminKey: null,
+      quotaThreshold: 95,
+      notifyEnabled: true,
+      autoSwitchEnabled: true,
+      pollInterval: 300,
+      scheduleStrategy: "manual",
+      rules: [],
+    });
     useThemeStore.setState({ theme: "dark", resolvedTheme: "dark" });
   });
 

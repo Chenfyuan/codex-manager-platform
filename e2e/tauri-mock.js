@@ -28,6 +28,25 @@ async function tauriInvoke(cmd, args) {
     case "detect_codex_cli":
       return { found: true, path: "/usr/local/bin/codex", version: "0.1.2" };
 
+    case "get_settings_snapshot":
+      return {
+        cliInfo: { found: true, path: "/usr/local/bin/codex", version: "0.1.2" },
+        adminKey: null,
+        quotaThreshold: 95,
+        notifyEnabled: true,
+        autoSwitchEnabled: true,
+        pollInterval: 300,
+        scheduleStrategy: "manual",
+        rules: [],
+      };
+
+    case "get_settings_diagnostics":
+      return {
+        dbSize: 1024,
+        historyCount: 0,
+        operationLogs: [],
+      };
+
     case "get_accounts":
       return [..._accounts];
 
