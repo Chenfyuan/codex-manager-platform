@@ -7,7 +7,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tokio::net::TcpStream;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::sync::{mpsc, Mutex, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
@@ -69,7 +69,10 @@ impl CodexProcess {
         self.port = portpicker::pick_unused_port().ok_or("没有可用的端口")?;
         let addr = format!("127.0.0.1:{}", self.port);
 
-        let child = Command::new("codex")
+        let mut command = crate::codex::cli::resolve_codex_cli()
+            .map(|cli| cli.tokio_command())
+            .map_err(|e| format!("启动 codex app-server 失败: {}", e))?;
+        let child = command
             .args(["app-server", "--listen", &format!("ws://{}", addr)])
             .env("CODEX_API_KEY", api_key)
             .kill_on_drop(true)

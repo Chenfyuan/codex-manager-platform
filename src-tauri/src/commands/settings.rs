@@ -1,6 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
-use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{window::Color, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::db;
 use crate::state::AppState;
@@ -15,38 +15,27 @@ pub struct CodexCliInfo {
 
 #[tauri::command]
 pub fn detect_codex_cli() -> CodexCliInfo {
-    let which_result = if cfg!(target_os = "windows") {
-        Command::new("where").arg("codex").output()
-    } else {
-        Command::new("which").arg("codex").output()
-    };
+    match crate::codex::cli::resolve_codex_cli() {
+        Ok(cli) => {
+            let version = cli
+                .std_command()
+                .arg("--version")
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
-    let path = match which_result {
-        Ok(output) if output.status.success() => {
-            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            CodexCliInfo {
+                found: true,
+                path: Some(cli.path().to_string_lossy().into_owned()),
+                version,
+            }
         }
-        _ => None,
-    };
-
-    if path.is_none() {
-        return CodexCliInfo {
+        Err(_) => CodexCliInfo {
             found: false,
             path: None,
             version: None,
-        };
-    }
-
-    let version = Command::new("codex")
-        .arg("--version")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-
-    CodexCliInfo {
-        found: true,
-        path,
-        version,
+        },
     }
 }
 
@@ -171,44 +160,94 @@ fn get_codex_processes_unix() -> Vec<CodexProcessInfo> {
     results
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct WindowsProcessRecord {
+    process_id: u32,
+    command_line: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum WindowsProcessRecords {
+    One(WindowsProcessRecord),
+    Many(Vec<WindowsProcessRecord>),
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_process_records(raw: &str) -> Vec<WindowsProcessRecord> {
+    match serde_json::from_str::<WindowsProcessRecords>(raw) {
+        Ok(WindowsProcessRecords::One(record)) => vec![record],
+        Ok(WindowsProcessRecords::Many(records)) => records,
+        Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn should_include_windows_codex_process(command_line: &str) -> bool {
+    let command_line = command_line.trim();
+    if command_line.is_empty() {
+        return false;
+    }
+
+    let normalized = command_line.replace('/', "\\").to_ascii_lowercase();
+
+    if normalized.contains("app-server") {
+        return false;
+    }
+
+    if normalized.contains("--type=") || normalized.contains("crashpad-handler") {
+        return false;
+    }
+
+    if normalized.contains("\\windowsapps\\openai.codex_")
+        && normalized.contains("\\app\\codex.exe")
+        && !normalized.contains("\\app\\resources\\codex.exe")
+    {
+        return false;
+    }
+
+    true
+}
+
 fn get_codex_processes_windows() -> Vec<CodexProcessInfo> {
-    let wmic = Command::new("wmic")
-        .args([
-            "process",
-            "where",
-            "name='codex.exe'",
-            "get",
-            "ProcessId,CommandLine,CreationDate",
-            "/format:csv",
-        ])
+    let script = r#"
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -ieq 'codex.exe' } |
+  Select-Object ProcessId, CommandLine |
+  ConvertTo-Json -Compress
+"#;
+    let powershell = Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
         .output();
-    let mut procs = match wmic {
+    match powershell {
         Ok(o) if o.status.success() => {
-            let out = String::from_utf8_lossy(&o.stdout);
-            out.lines()
-                .skip(1)
-                .filter(|l| !l.trim().is_empty())
-                .filter_map(|line| {
-                    let cols: Vec<&str> = line.split(',').collect();
-                    if cols.len() >= 4 {
-                        let pid: u32 = cols.last()?.trim().parse().ok()?;
-                        let cmd = cols[1].trim().to_string();
-                        Some(CodexProcessInfo {
-                            pid,
-                            cwd: None,
-                            elapsed_secs: 0,
-                            command_args: cmd,
-                        })
-                    } else {
-                        None
+            let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if out.is_empty() {
+                return vec![];
+            }
+
+            parse_windows_process_records(&out)
+                .into_iter()
+                .filter_map(|record| {
+                    let command_args = record.command_line?.trim().to_string();
+                    if !should_include_windows_codex_process(&command_args) {
+                        return None;
                     }
+
+                    Some(CodexProcessInfo {
+                        pid: record.process_id,
+                        cwd: None,
+                        elapsed_secs: 0,
+                        command_args,
+                    })
                 })
                 .collect()
         }
         _ => vec![],
-    };
-    procs.retain(|p| !p.command_args.contains("app-server"));
-    procs
+    }
 }
 
 fn parse_etime(s: &str) -> u64 {
@@ -250,15 +289,18 @@ pub fn get_account_launch_command(
         return Err("凭证为空".into());
     }
     if crate::codex::switcher::is_oauth_credential(&cred) {
-        Ok("codex".to_string())
+        crate::codex::cli::shell_invocation()
     } else {
-        Ok(format!("CODEX_API_KEY={} codex", cred))
+        crate::codex::cli::shell_command_with_env("CODEX_API_KEY", &cred)
     }
 }
 
 #[tauri::command]
-pub fn toggle_spotlight(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn toggle_spotlight(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("spotlight") {
+        #[cfg(not(target_os = "macos"))]
+        let _ = win.set_decorations(false);
+
         let visible = win.is_visible().unwrap_or(false);
         if visible {
             win.hide().map_err(|e| e.to_string())?;
@@ -278,38 +320,51 @@ pub fn toggle_spotlight(app: tauri::AppHandle) -> Result<(), String> {
             win.set_focus().map_err(|e| e.to_string())?;
         }
     } else {
+        let app_handle = app.clone();
+        let win = tauri::async_runtime::spawn_blocking(move || {
+            let url = WebviewUrl::App("index.html?spotlight=1".into());
+            let builder = WebviewWindowBuilder::new(&app_handle, "spotlight", url)
+                .title("")
+                .inner_size(400.0, 480.0)
+                .resizable(false)
+                .always_on_top(true)
+                .center()
+                .skip_taskbar(true);
+
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .decorations(true)
+                .transparent(true)
+                .effects(tauri::utils::config::WindowEffectsConfig {
+                    effects: vec![tauri::window::Effect::Sidebar],
+                    state: Some(tauri::window::EffectState::FollowsWindowActiveState),
+                    radius: Some(10.0),
+                    color: None,
+                })
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition {
+                    x: -20.0,
+                    y: -20.0,
+                }));
+
+            #[cfg(not(target_os = "macos"))]
+            let builder = builder
+                .decorations(false)
+                .transparent(false)
+                .background_color(Color(17, 18, 30, 255));
+
+            builder
+                .build()
+                .map_err(|e| format!("创建窗口失败: {}", e))
+        })
+        .await
+        .map_err(|e| format!("创建窗口任务失败: {}", e))??;
+
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.hide();
         }
-        let url = WebviewUrl::App("index.html?spotlight=1".into());
-        let builder = WebviewWindowBuilder::new(&app, "spotlight", url)
-            .title("")
-            .inner_size(400.0, 480.0)
-            .resizable(false)
-            .decorations(true)
-            .transparent(true)
-            .always_on_top(true)
-            .center()
-            .skip_taskbar(true)
-            .effects(tauri::utils::config::WindowEffectsConfig {
-                effects: vec![tauri::window::Effect::Sidebar],
-                state: Some(tauri::window::EffectState::FollowsWindowActiveState),
-                radius: Some(10.0),
-                color: None,
-            });
-
-        #[cfg(target_os = "macos")]
-        let builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition {
-                x: -20.0,
-                y: -20.0,
-            }));
-
-        let win = builder
-            .build()
-            .map_err(|e| format!("创建窗口失败: {}", e))?;
+        let _ = win.show();
         win.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())

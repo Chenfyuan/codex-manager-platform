@@ -15,6 +15,21 @@ use state::AppState;
 
 const TRAY_ID: &str = "main-tray";
 
+#[cfg(target_os = "windows")]
+fn configure_windows_main_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        // The frontend renders a custom draggable title bar on Windows.
+        window.set_decorations(false)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_windows_main_window(_: &AppHandle) -> tauri::Result<()> {
+    Ok(())
+}
+
 pub fn rebuild_app_menu(app: &AppHandle) {
     let state = app.state::<AppState>();
     let accounts = state.accounts.lock().unwrap().clone();
@@ -275,6 +290,7 @@ pub fn run() {
             *state.accounts.lock().unwrap() = accounts;
             app.manage(state);
             app.manage(commands::proxy::ProxyState::new());
+            configure_windows_main_window(app.handle())?;
 
             let show_item = MenuItemBuilder::new("显示窗口").id("show").build(app)?;
             let quit_item = MenuItemBuilder::new("退出").id("quit").build(app)?;

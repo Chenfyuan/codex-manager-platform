@@ -5,8 +5,10 @@ import { useAccountStore } from "@/stores/accountStore";
 import { activateAccount } from "@/lib/tauri";
 import { toast } from "@/stores/toastStore";
 
-export function useGlobalShortcut() {
+export function useGlobalShortcut(enabled = true) {
   useEffect(() => {
+    if (!enabled) return;
+
     const toggleShortcut = "CommandOrControl+Shift+X";
 
     register(toggleShortcut, async () => {
@@ -50,5 +52,5 @@ export function useGlobalShortcut() {
         unregister(s).catch(() => {});
       }
     };
-  }, []);
+  }, [enabled]);
 }

@@ -20,7 +20,7 @@ import { getAccounts, getActiveAccountId, refreshTrayMenu } from "./lib/tauri";
 const isSpotlight = new URLSearchParams(window.location.search).has("spotlight");
 
 export function App() {
-  useGlobalShortcut();
+  useGlobalShortcut(!isSpotlight);
 
   if (isSpotlight) {
     return (

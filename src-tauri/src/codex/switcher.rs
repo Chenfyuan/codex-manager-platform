@@ -103,7 +103,10 @@ impl QuotaInfo {
 }
 
 pub fn check_quota_sync(credential: &str) -> QuotaInfo {
-    let mut cmd = Command::new("codex");
+    let mut cmd = match crate::codex::cli::resolve_codex_cli() {
+        Ok(cli) => cli.std_command(),
+        Err(msg) => return QuotaInfo::error(msg),
+    };
     cmd.args(["app-server"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

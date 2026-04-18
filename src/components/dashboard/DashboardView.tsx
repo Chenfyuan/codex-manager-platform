@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAccountStore } from "@/stores/accountStore";
 import { useUIStore } from "@/stores/uiStore";
 import { toast } from "@/stores/toastStore";
-import { activateAccount, checkAllQuotas, checkQuota, removeAccount, refreshOAuthToken, getQuotaHistory, getSetting, getRecommendedAccount, getTodaySwitchCount, isCodexRunning, getCodexProcesses, getAccountLaunchCommand, logOperation, reorderAccounts } from "@/lib/tauri";
+import { activateAccount, checkAllQuotas, checkQuota, detectCodexCli, removeAccount, refreshOAuthToken, getQuotaHistory, getSetting, getRecommendedAccount, getTodaySwitchCount, getCodexProcesses, getAccountLaunchCommand, logOperation, reorderAccounts } from "@/lib/tauri";
 import { notifyTaskComplete, notifyQuotaWarning } from "@/lib/notifications";
 import { EditAccountDialog } from "@/components/accounts/EditAccountDialog";
 import { reorderAccountIds } from "@/components/dashboard/accountOrder";
@@ -172,6 +172,7 @@ export function DashboardView() {
   const [todaySwitchCount, setTodaySwitchCount] = useState(0);
   const [codexRunning, setCodexRunning] = useState(false);
   const [codexProcesses, setCodexProcesses] = useState<CodexProcessInfo[]>([]);
+  const [codexCliAvailable, setCodexCliAvailable] = useState<boolean | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const removeAccountFromStore = useAccountStore((s) => s.removeAccount);
@@ -192,6 +193,11 @@ export function DashboardView() {
   };
 
   const handleCheckSingleQuota = async (accountId: string) => {
+    if (codexCliAvailable === false) {
+      toast("error", "未检测到 Codex CLI，安装后才能查询额度");
+      return;
+    }
+
     setRefreshingId(accountId);
     try {
       const quota = await checkQuota(accountId);
@@ -225,7 +231,31 @@ export function DashboardView() {
   const warnedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (accounts.length === 0) return;
+    let cancelled = false;
+
+    detectCodexCli()
+      .then((info) => {
+        if (cancelled) return;
+        setCodexCliAvailable(info.found);
+        if (!info.found) {
+          setCodexRunning(false);
+          setCodexProcesses([]);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCodexCliAvailable(false);
+        setCodexRunning(false);
+        setCodexProcesses([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (accounts.length === 0 || codexCliAvailable !== true) return;
 
     const startPolling = async () => {
       const intervalSetting = await getSetting("poll_interval").catch(() => null);
@@ -249,8 +279,12 @@ export function DashboardView() {
         setQuotaHistory(historyMap);
 
         getTodaySwitchCount().then(setTodaySwitchCount).catch(() => {});
-        isCodexRunning().then(setCodexRunning).catch(() => {});
-      getCodexProcesses().then(setCodexProcesses).catch(() => {});
+        getCodexProcesses()
+          .then((processes) => {
+            setCodexProcesses(processes);
+            setCodexRunning(processes.length > 0);
+          })
+          .catch(() => {});
 
         // Auto-refresh OAuth tokens on error
         const allAccounts = useAccountStore.getState().accounts;
@@ -348,7 +382,7 @@ export function DashboardView() {
 
     startPolling();
     return () => clearInterval(pollRef.current);
-  }, [accounts.length]);
+  }, [accounts.length, codexCliAvailable]);
 
   if (accounts.length === 0) {
     return (
@@ -682,7 +716,7 @@ export function DashboardView() {
 
               {!quota && (
                 <p className="mt-3 text-xs text-neutral-600">
-                  点击刷新查看额度
+                  {codexCliAvailable === false ? "未检测到 Codex CLI，安装后可查询额度" : "点击刷新查看额度"}
                 </p>
               )}
 

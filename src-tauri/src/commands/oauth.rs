@@ -1,7 +1,6 @@
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::process::Command;
 
 fn auth_file_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -94,7 +93,10 @@ pub async fn start_oauth_login() -> Result<String, String> {
         .ok()
         .and_then(|m| m.modified().ok());
 
-    let output = Command::new("codex")
+    let mut command = crate::codex::cli::resolve_codex_cli()
+        .map(|cli| cli.tokio_command())
+        .map_err(|e| format!("启动 OAuth 登录失败: {}", e))?;
+    let output = command
         .args(["auth", "login"])
         .output()
         .await
@@ -149,7 +151,10 @@ pub async fn refresh_oauth_token(
     let backup = std::fs::read_to_string(&auth_path).ok();
     let _ = std::fs::write(&auth_path, &old_cred);
 
-    let output = Command::new("codex")
+    let mut command = crate::codex::cli::resolve_codex_cli()
+        .map(|cli| cli.tokio_command())
+        .map_err(|e| format!("刷新 token 失败: {}", e))?;
+    let output = command
         .args(["auth", "login"])
         .output()
         .await
