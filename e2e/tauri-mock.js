@@ -26,11 +26,11 @@ function makeAccount(name, authMethod, credential) {
 async function tauriInvoke(cmd, args) {
   switch (cmd) {
     case "detect_codex_cli":
-      return { found: true, path: "/usr/local/bin/codex", version: "0.1.2" };
+      return { found: true, path: "/usr/local/bin/codex", version: "0.1.3" };
 
     case "get_settings_snapshot":
       return {
-        cliInfo: { found: true, path: "/usr/local/bin/codex", version: "0.1.2" },
+      cliInfo: { found: true, path: "/usr/local/bin/codex", version: "0.1.3" },
         adminKey: null,
         quotaThreshold: 95,
         notifyEnabled: true,

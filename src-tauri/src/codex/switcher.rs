@@ -153,7 +153,7 @@ fn run_quota_rpc(mut cmd: Command) -> QuotaInfo {
         "id": 0,
         "method": "initialize",
         "params": {
-            "clientInfo": { "name": "codex-manager", "version": "0.1.2" }
+            "clientInfo": { "name": "codex-manager", "version": "0.1.3" }
         }
     });
     let account_msg = serde_json::json!({
