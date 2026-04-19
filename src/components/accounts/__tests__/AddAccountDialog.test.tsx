@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AddAccountDialog } from "@/components/accounts/AddAccountDialog";
+import { cancelOAuthLogin, startOAuthLogin } from "@/lib/tauri";
 import { useAccountStore } from "@/stores/accountStore";
 
 describe("AddAccountDialog", () => {
@@ -64,5 +65,28 @@ describe("AddAccountDialog", () => {
     const oauthBtns = screen.getAllByText("OAuth");
     await user.click(oauthBtns[0]);
     expect(screen.queryByPlaceholderText("sk-...")).not.toBeInTheDocument();
+  });
+
+  it("can cancel a pending OAuth login", async () => {
+    const user = userEvent.setup();
+    let resolveLogin: ((value: string) => void) | undefined;
+
+    vi.mocked(startOAuthLogin).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLogin = resolve;
+      }),
+    );
+    vi.mocked(cancelOAuthLogin).mockResolvedValue(true);
+
+    render(<AddAccountDialog open={true} onClose={onClose} />);
+
+    await user.click(screen.getAllByText("OAuth")[0]);
+    await user.click(screen.getByRole("button", { name: /打开浏览器登录/ }));
+    expect(screen.getByRole("button", { name: /取消等待/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /取消等待/ }));
+    expect(cancelOAuthLogin).toHaveBeenCalled();
+
+    resolveLogin?.("{}");
   });
 });

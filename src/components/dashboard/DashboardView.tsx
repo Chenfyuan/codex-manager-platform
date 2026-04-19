@@ -39,6 +39,8 @@ const planLabels: Record<string, { text: string; color: string }> = {
   unknown: { text: "未知", color: "text-neutral-500 bg-neutral-500/10 border-neutral-500/20" },
 };
 
+const CODEX_PROCESS_POLL_INTERVAL_MS = 5_000;
+
 function formatResetTime(resetsAt: number): string {
   const diffMins = Math.max(0, Math.round((resetsAt * 1000 - Date.now()) / 60000));
   if (diffMins <= 0) return "已重置";
@@ -228,6 +230,7 @@ export function DashboardView() {
   };
 
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const processPollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const warnedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -255,6 +258,51 @@ export function DashboardView() {
   }, []);
 
   useEffect(() => {
+    if (processPollRef.current) {
+      clearInterval(processPollRef.current);
+      processPollRef.current = undefined;
+    }
+
+    if (accounts.length === 0 || codexCliAvailable !== true) {
+      setCodexRunning(false);
+      setCodexProcesses([]);
+      return;
+    }
+
+    let cancelled = false;
+    let refreshing = false;
+
+    const refreshCodexProcesses = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const processes = await getCodexProcesses();
+        if (cancelled) return;
+        setCodexProcesses(processes);
+        setCodexRunning(processes.length > 0);
+      } catch {
+        if (!cancelled) {
+          setCodexRunning(false);
+          setCodexProcesses([]);
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+
+    refreshCodexProcesses();
+    processPollRef.current = setInterval(refreshCodexProcesses, CODEX_PROCESS_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      if (processPollRef.current) {
+        clearInterval(processPollRef.current);
+        processPollRef.current = undefined;
+      }
+    };
+  }, [accounts.length, codexCliAvailable]);
+
+  useEffect(() => {
     if (accounts.length === 0 || codexCliAvailable !== true) return;
 
     const startPolling = async () => {
@@ -279,12 +327,6 @@ export function DashboardView() {
         setQuotaHistory(historyMap);
 
         getTodaySwitchCount().then(setTodaySwitchCount).catch(() => {});
-        getCodexProcesses()
-          .then((processes) => {
-            setCodexProcesses(processes);
-            setCodexRunning(processes.length > 0);
-          })
-          .catch(() => {});
 
         // Auto-refresh OAuth tokens on error
         const allAccounts = useAccountStore.getState().accounts;

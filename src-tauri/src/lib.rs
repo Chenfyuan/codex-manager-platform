@@ -15,19 +15,27 @@ use state::AppState;
 
 const TRAY_ID: &str = "main-tray";
 
-#[cfg(target_os = "windows")]
-fn configure_windows_main_window(app: &AppHandle) -> tauri::Result<()> {
+#[cfg(not(target_os = "macos"))]
+fn configure_custom_titlebar_main_window(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
-        // The frontend renders a custom draggable title bar on Windows.
+        // The frontend renders a custom draggable title bar on non-macOS platforms.
         window.set_decorations(false)?;
     }
 
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
-fn configure_windows_main_window(_: &AppHandle) -> tauri::Result<()> {
+#[cfg(target_os = "macos")]
+fn configure_custom_titlebar_main_window(_: &AppHandle) -> tauri::Result<()> {
     Ok(())
+}
+
+fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 pub fn rebuild_app_menu(app: &AppHandle) {
@@ -254,6 +262,9 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            focus_main_window(app);
+        }))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::new().build())
@@ -290,7 +301,7 @@ pub fn run() {
             *state.accounts.lock().unwrap() = accounts;
             app.manage(state);
             app.manage(commands::proxy::ProxyState::new());
-            configure_windows_main_window(app.handle())?;
+            configure_custom_titlebar_main_window(app.handle())?;
 
             let show_item = MenuItemBuilder::new("显示窗口").id("show").build(app)?;
             let quit_item = MenuItemBuilder::new("退出").id("quit").build(app)?;
@@ -351,10 +362,7 @@ pub fn run() {
                 } else {
                     match event_id.as_str() {
                         "show" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
+                            focus_main_window(app);
                         }
                         "quit" => {
                             app.exit(0);
@@ -418,8 +426,7 @@ pub fn run() {
                         id if id.starts_with("view-") => {
                             let view = id.strip_prefix("view-").unwrap_or("dashboard");
                             if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
+                                focus_main_window(app);
                                 let _ = w.emit("menu-navigate", view);
                             }
                         }
@@ -481,6 +488,7 @@ pub fn run() {
             commands::settings::toggle_spotlight,
             commands::settings::hide_spotlight,
             commands::oauth::start_oauth_login,
+            commands::oauth::cancel_oauth_login,
             commands::oauth::check_oauth_status,
             commands::oauth::detect_existing_credentials,
             commands::oauth::refresh_oauth_token,

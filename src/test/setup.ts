@@ -106,6 +106,7 @@ vi.mock("@/lib/tauri", () => ({
   updateAccountName: vi.fn().mockResolvedValue(undefined),
   updateAccountCredential: vi.fn().mockResolvedValue(undefined),
   startOAuthLogin: vi.fn().mockResolvedValue(""),
+  cancelOAuthLogin: vi.fn().mockResolvedValue(false),
   checkOAuthStatus: vi.fn().mockResolvedValue(false),
   detectExistingCredentials: vi.fn().mockResolvedValue([]),
   importAccount: vi.fn().mockResolvedValue({}),

@@ -1,10 +1,39 @@
 use serde::Serialize;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
+
+use crate::state::AppState;
+
+const OAUTH_LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
+const OAUTH_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 fn auth_file_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".codex").join("auth.json")
+}
+
+async fn stop_oauth_login_process(state: &AppState) -> Result<bool, String> {
+    let mut child = {
+        let mut oauth_login = state.oauth_login.lock().await;
+        oauth_login.take()
+    };
+
+    if let Some(ref mut running) = child {
+        let _ = running.kill().await;
+        let _ = running.wait().await;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn auth_file_changed(auth_path: &PathBuf, existed_before: bool, mtime_before: Option<std::time::SystemTime>) -> bool {
+    std::fs::metadata(auth_path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .map(|mtime_after| !existed_before || Some(mtime_after) != mtime_before)
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,50 +115,109 @@ pub fn detect_existing_credentials() -> Vec<DetectedCredential> {
 }
 
 #[tauri::command]
-pub async fn start_oauth_login() -> Result<String, String> {
+pub async fn start_oauth_login(
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
     let auth_path = auth_file_path();
     let existed_before = auth_path.exists();
     let mtime_before = std::fs::metadata(&auth_path)
         .ok()
         .and_then(|m| m.modified().ok());
 
-    let mut command = crate::codex::cli::resolve_codex_cli()
-        .map(|cli| cli.tokio_command())
-        .map_err(|e| format!("启动 OAuth 登录失败: {}", e))?;
-    let output = command
-        .args(["auth", "login"])
-        .output()
-        .await
-        .map_err(|e| format!("启动 OAuth 登录失败: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("OAuth 登录失败: {}", stderr));
-    }
-
-    for _ in 0..60 {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-
-        if let Ok(meta) = std::fs::metadata(&auth_path) {
-            let mtime_after = meta.modified().ok();
-            let is_new = !existed_before;
-            let is_updated = mtime_before != mtime_after;
-
-            if is_new || is_updated {
-                let content = std::fs::read_to_string(&auth_path)
-                    .map_err(|e| format!("读取 auth.json 失败: {}", e))?;
-                return Ok(content);
+    {
+        let mut oauth_login = state.oauth_login.lock().await;
+        if let Some(child) = oauth_login.as_mut() {
+            match child.try_wait() {
+                Ok(Some(_)) | Err(_) => {
+                    *oauth_login = None;
+                }
+                Ok(None) => {
+                    return Err("OAuth 登录已在进行中，请先完成或取消当前授权".into());
+                }
             }
         }
     }
 
-    Err("OAuth 登录超时 (60秒)".into())
+    let mut command = crate::codex::cli::resolve_codex_cli()
+        .map(|cli| cli.tokio_command())
+        .map_err(|e| format!("启动 OAuth 登录失败: {}", e))?;
+    let child = command
+        .args(["auth", "login"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动 OAuth 登录失败: {}", e))?;
+
+    {
+        let mut oauth_login = state.oauth_login.lock().await;
+        *oauth_login = Some(child);
+    }
+
+    let deadline = tokio::time::Instant::now() + OAUTH_LOGIN_TIMEOUT;
+
+    loop {
+        tokio::time::sleep(OAUTH_LOGIN_POLL_INTERVAL).await;
+
+        if auth_file_changed(&auth_path, existed_before, mtime_before) {
+            let content = std::fs::read_to_string(&auth_path)
+                .map_err(|e| format!("读取 auth.json 失败: {}", e))?;
+            let _ = stop_oauth_login_process(state.inner()).await;
+            return Ok(content);
+        }
+
+        let finished_child = {
+            let mut oauth_login = state.oauth_login.lock().await;
+            match oauth_login.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(Some(_)) | Err(_) => oauth_login.take(),
+                    Ok(None) => None,
+                },
+                None => return Err("OAuth 登录已取消".into()),
+            }
+        };
+
+        if let Some(child) = finished_child {
+            if auth_file_changed(&auth_path, existed_before, mtime_before) {
+                let content = std::fs::read_to_string(&auth_path)
+                    .map_err(|e| format!("读取 auth.json 失败: {}", e))?;
+                return Ok(content);
+            }
+
+            let output = child
+                .wait_with_output()
+                .await
+                .map_err(|e| format!("读取 OAuth 登录结果失败: {}", e))?;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+            if !output.status.success() {
+                if stderr.is_empty() {
+                    return Err("OAuth 登录已取消".into());
+                }
+                return Err(format!("OAuth 登录失败: {}", stderr));
+            }
+
+            return Err("未检测到 OAuth 凭证写入，请重试".into());
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            let _ = stop_oauth_login_process(state.inner()).await;
+            return Err("OAuth 登录已取消或超时，请重试".into());
+        }
+    }
 }
 
 #[tauri::command]
 pub fn check_oauth_status() -> Result<bool, String> {
     let auth_path = auth_file_path();
     Ok(auth_path.exists())
+}
+
+#[tauri::command]
+pub async fn cancel_oauth_login(
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    stop_oauth_login_process(state.inner()).await
 }
 
 #[tauri::command]

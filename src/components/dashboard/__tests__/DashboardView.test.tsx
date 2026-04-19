@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DashboardView } from "@/components/dashboard/DashboardView";
-import { reorderAccounts } from "@/lib/tauri";
+import { getCodexProcesses, reorderAccounts } from "@/lib/tauri";
 import { useAccountStore } from "@/stores/accountStore";
 import { useUIStore } from "@/stores/uiStore";
 import { makeAccount } from "@/test/helpers";
@@ -122,5 +122,43 @@ describe("DashboardView", () => {
       expect(useAccountStore.getState().accounts.map((account) => account.id)).toEqual(["a2", "b1", "a1"]);
     });
     expect(vi.mocked(reorderAccounts)).toHaveBeenCalledWith(["a2", "b1", "a1"]);
+  });
+
+  it("clears the running codex card on the next process poll", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(getCodexProcesses)
+        .mockResolvedValueOnce([
+          {
+            pid: 4321,
+            cwd: "/tmp/project",
+            elapsedSecs: 12,
+            commandArgs: "codex",
+          },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([]);
+
+      useAccountStore.setState({
+        accounts: [makeAccount({ id: "a1", name: "Work" })],
+      });
+
+      render(<DashboardView />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText("Codex 运行中 · 1 个进程")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(screen.queryByText("Codex 运行中 · 1 个进程")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Key,
   Globe,
@@ -13,6 +13,7 @@ import { Drawer } from "@/components/ui/Drawer";
 import {
   addAccount,
   startOAuthLogin,
+  cancelOAuthLogin,
   detectExistingCredentials,
   importAccount,
   getAllTags,
@@ -47,6 +48,7 @@ export function AddAccountDialog({
   const [imported, setImported] = useState<Set<string>>(new Set());
   const [tag, setTag] = useState("");
   const [existingTags, setExistingTags] = useState<string[]>([]);
+  const oauthRequestIdRef = useRef(0);
 
   const storeAddAccount = useAccountStore((s) => s.addAccount);
 
@@ -68,7 +70,24 @@ export function AddAccountDialog({
     }
   }, [open, tab, detectedCreds.length]);
 
+  const cancelPendingOAuth = async (silent = false) => {
+    if (!oauthLoading) return;
+    oauthRequestIdRef.current += 1;
+    setOauthLoading(false);
+    if (!silent) {
+      setError(null);
+    }
+    try {
+      await cancelOAuthLogin();
+    } catch (err) {
+      if (!silent) {
+        setError(String(err));
+      }
+    }
+  };
+
   const resetForm = () => {
+    void cancelPendingOAuth(true);
     setName("");
     setCredential("");
     setTag("");
@@ -103,14 +122,19 @@ export function AddAccountDialog({
   };
 
   const handleOAuthLogin = async () => {
+    const requestId = oauthRequestIdRef.current + 1;
+    oauthRequestIdRef.current = requestId;
     setOauthLoading(true);
     setError(null);
     try {
       const authJson = await startOAuthLogin();
+      if (oauthRequestIdRef.current !== requestId) return;
       setCredential(authJson);
     } catch (err) {
+      if (oauthRequestIdRef.current !== requestId) return;
       setError(String(err));
     } finally {
+      if (oauthRequestIdRef.current !== requestId) return;
       setOauthLoading(false);
     }
   };
@@ -239,7 +263,11 @@ export function AddAccountDialog({
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => { setAuthMethod("api_key"); setCredential(""); }}
+                onClick={() => {
+                  void cancelPendingOAuth(true);
+                  setAuthMethod("api_key");
+                  setCredential("");
+                }}
                 className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
                   authMethod === "api_key"
                     ? "border-primary-500 bg-primary-600/10 text-primary-400"
@@ -251,7 +279,10 @@ export function AddAccountDialog({
               </button>
               <button
                 type="button"
-                onClick={() => { setAuthMethod("oauth"); setCredential(""); }}
+                onClick={() => {
+                  setAuthMethod("oauth");
+                  setCredential("");
+                }}
                 className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
                   authMethod === "oauth"
                     ? "border-primary-500 bg-primary-600/10 text-primary-400"
@@ -285,18 +316,29 @@ export function AddAccountDialog({
                   已完成 OAuth 授权
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={handleOAuthLogin}
-                  disabled={oauthLoading}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.08] bg-surface-2 px-4 py-3 text-sm text-neutral-300 transition-colors hover:border-white/[0.12] hover:text-neutral-200 disabled:opacity-50"
-                >
-                  {oauthLoading ? (
-                    <><Loader2 size={16} className="animate-spin" /> 等待浏览器授权...</>
-                  ) : (
-                    <><ExternalLink size={16} /> 打开浏览器登录</>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOAuthLogin}
+                    disabled={oauthLoading}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-white/[0.08] bg-surface-2 px-4 py-3 text-sm text-neutral-300 transition-colors hover:border-white/[0.12] hover:text-neutral-200 disabled:opacity-50"
+                  >
+                    {oauthLoading ? (
+                      <><Loader2 size={16} className="animate-spin" /> 等待浏览器授权...</>
+                    ) : (
+                      <><ExternalLink size={16} /> 打开浏览器登录</>
+                    )}
+                  </button>
+                  {oauthLoading && (
+                    <button
+                      type="button"
+                      onClick={() => void cancelPendingOAuth()}
+                      className="rounded-lg border border-white/[0.08] bg-surface-2 px-4 py-3 text-sm text-neutral-400 transition-colors hover:border-white/[0.12] hover:text-neutral-200"
+                    >
+                      取消等待
+                    </button>
                   )}
-                </button>
+                </div>
               )}
               <p className="text-xs text-neutral-500">将打开系统浏览器完成 ChatGPT 授权</p>
             </div>

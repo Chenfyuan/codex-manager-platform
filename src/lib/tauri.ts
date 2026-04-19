@@ -40,6 +40,10 @@ export async function startOAuthLogin(): Promise<string> {
   return invoke("start_oauth_login");
 }
 
+export async function cancelOAuthLogin(): Promise<boolean> {
+  return invoke("cancel_oauth_login");
+}
+
 export async function checkOAuthStatus(): Promise<boolean> {
   return invoke("check_oauth_status");
 }
