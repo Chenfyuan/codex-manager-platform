@@ -137,7 +137,7 @@ pub async fn check_quota(
         }
     };
     let info = tokio::task::spawn_blocking(move || {
-        switcher::check_quota_sync(&credential)
+        switcher::check_quota_sync_with_refresh(&credential, true)
     })
     .await
     .map_err(|e| format!("查询失败: {}", e))?;

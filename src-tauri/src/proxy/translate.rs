@@ -214,7 +214,7 @@ pub fn responses_to_claude_request(
         max_tokens,
         messages,
         system,
-        stream: true,
+        stream: req.stream,
         temperature: req.temperature,
         top_p: None,
         stop_sequences: None,
@@ -255,7 +255,8 @@ pub fn responses_to_openai_chat(
     OpenAIRequest {
         model: target_model.to_string(),
         messages,
-        stream: true,
+        stream: req.stream,
+        stream_options: if req.stream { Some(serde_json::json!({"include_usage": true})) } else { None },
         temperature: req.temperature,
         max_tokens: req.max_output_tokens.or(req.max_tokens),
         top_p: None,
@@ -267,6 +268,7 @@ pub enum StreamDelta {
     Text(String),
     InputTokens(u32),
     OutputTokens(u32),
+    Usage(u32, u32), // (input_tokens, output_tokens)
     Done,
     Skip,
 }
@@ -281,9 +283,11 @@ pub fn parse_sse_event_anthropic(data: &str) -> StreamDelta {
                             .get("input_tokens")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0) as u32;
+                        log::debug!("[proxy] message_start input_tokens={}", tokens);
                         return StreamDelta::InputTokens(tokens);
                     }
                 }
+                log::debug!("[proxy] message_start but no usage found, data: {}", data);
                 StreamDelta::Skip
             }
             "content_block_delta" => {
@@ -295,6 +299,15 @@ pub fn parse_sse_event_anthropic(data: &str) -> StreamDelta {
                 StreamDelta::Skip
             }
             "message_delta" => {
+                // Anthropic API: usage is at top level in message_delta event, not inside delta
+                if let Some(usage) = &evt.usage {
+                    let tokens = usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    return StreamDelta::OutputTokens(tokens);
+                }
+                // Fallback: also check inside delta for compatibility
                 if let Some(delta) = &evt.delta {
                     if let Some(usage) = delta.get("usage") {
                         let tokens = usage
@@ -310,6 +323,7 @@ pub fn parse_sse_event_anthropic(data: &str) -> StreamDelta {
             _ => StreamDelta::Skip,
         }
     } else {
+        log::debug!("[proxy] failed to parse SSE event: {}", data);
         StreamDelta::Skip
     }
 }
@@ -351,11 +365,8 @@ pub fn parse_sse_event_openai(data: &str) -> StreamDelta {
                 .get("completion_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
-            if inp > 0 {
-                return StreamDelta::InputTokens(inp);
-            }
-            if out > 0 {
-                return StreamDelta::OutputTokens(out);
+            if inp > 0 || out > 0 {
+                return StreamDelta::Usage(inp, out);
             }
         }
     }

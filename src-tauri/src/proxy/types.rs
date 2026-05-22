@@ -1,4 +1,26 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserialize `input` field which can be a string or an array in OpenAI Responses API.
+/// If it's a string, wrap it into a user message object.
+fn deserialize_input<'de, D>(deserializer: D) -> Result<Vec<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(arr) => Ok(arr),
+        serde_json::Value::String(s) => {
+            // Convert plain string input to a user message
+            Ok(vec![serde_json::json!({
+                "type": "message",
+                "role": "user",
+                "content": s
+            })])
+        }
+        serde_json::Value::Null => Ok(Vec::new()),
+        _ => Ok(vec![value]),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAIRequest {
@@ -6,6 +28,8 @@ pub struct OpenAIRequest {
     pub messages: Vec<OpenAIMessage>,
     #[serde(default)]
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,6 +203,8 @@ pub struct ClaudeStreamEvent {
     pub delta: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_block: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,12 +260,13 @@ pub struct ProxyLog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponsesCreateRequest {
     #[serde(rename = "type")]
+    #[serde(default)]
     pub event_type: String,
     #[serde(default)]
     pub model: String,
     #[serde(default)]
     pub stream: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_input")]
     pub input: Vec<serde_json::Value>,
     #[serde(default)]
     pub tools: Vec<serde_json::Value>,
@@ -259,4 +286,44 @@ pub struct ResponsesCreateRequest {
     pub max_output_tokens: Option<u32>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResponsesCreateRequest;
+
+    #[test]
+    fn responses_http_request_can_omit_top_level_type() {
+        let payload = serde_json::json!({
+            "model": "gpt-5.4",
+            "stream": true,
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "hello"
+                }]
+            }]
+        });
+
+        let req: ResponsesCreateRequest = serde_json::from_value(payload).unwrap();
+        assert_eq!(req.event_type, "");
+        assert_eq!(req.model, "gpt-5.4");
+        assert!(req.stream);
+        assert_eq!(req.input.len(), 1);
+    }
+
+    #[test]
+    fn responses_ws_request_still_parses_type() {
+        let payload = serde_json::json!({
+            "type": "response.create",
+            "model": "gpt-5.4",
+            "stream": true,
+            "input": []
+        });
+
+        let req: ResponsesCreateRequest = serde_json::from_value(payload).unwrap();
+        assert_eq!(req.event_type, "response.create");
+    }
 }

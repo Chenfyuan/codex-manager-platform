@@ -178,6 +178,75 @@ pub async fn proxy_fetch_remote_models(
     }
 }
 
+#[tauri::command]
+pub async fn proxy_write_codex_config(
+    port: u16,
+    model: String,
+) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let config_path = home.join(".codex").join("config.toml");
+
+    // Ensure directory exists
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create .codex dir: {}", e))?;
+    }
+
+    // Backup existing config before modifying
+    let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if !content.is_empty() {
+        let backup_path = home.join(".codex").join("config.toml.bak");
+        std::fs::write(&backup_path, &content)
+            .map_err(|e| format!("Failed to backup config: {}", e))?;
+    }
+
+    let mut doc = content.parse::<toml_edit::DocumentMut>().map_err(|e| format!("Failed to parse config.toml: {}", e))?;
+
+    // Set top-level fields
+    doc["model_provider"] = toml_edit::value("custom");
+    doc["model"] = toml_edit::value(model.as_str());
+
+    // Set [model_providers.custom] section
+    if !doc.contains_table("model_providers") {
+        doc["model_providers"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let providers = doc["model_providers"].as_table_mut().unwrap();
+    if !providers.contains_key("custom") {
+        providers["custom"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let custom = providers["custom"].as_table_mut().unwrap();
+    custom["name"] = toml_edit::value("custom");
+    custom["wire_api"] = toml_edit::value("responses");
+    custom["requires_openai_auth"] = toml_edit::value(true);
+    custom["base_url"] = toml_edit::value(format!("http://127.0.0.1:{}", port));
+
+    std::fs::write(&config_path, doc.to_string())
+        .map_err(|e| format!("Failed to write config.toml: {}", e))?;
+
+    Ok(config_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn proxy_restore_codex_config() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let config_path = home.join(".codex").join("config.toml");
+    let backup_path = home.join(".codex").join("config.toml.bak");
+
+    if !backup_path.exists() {
+        return Err("没有找到备份文件".to_string());
+    }
+
+    std::fs::copy(&backup_path, &config_path)
+        .map_err(|e| format!("还原失败: {}", e))?;
+    std::fs::remove_file(&backup_path).ok();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn proxy_has_codex_backup() -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    Ok(home.join(".codex").join("config.toml.bak").exists())
+}
+
 async fn fetch_anthropic_models(
     client: &reqwest::Client,
     api_key: &str,

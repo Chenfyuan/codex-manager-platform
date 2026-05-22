@@ -287,15 +287,22 @@ async fn handle_anthropic_stream(
                                 }
                             }
                             "message_delta" => {
-                                if let Some(delta) = &evt.delta {
-                                    let stop_reason =
-                                        delta.get("stop_reason").and_then(|v| v.as_str());
-                                    if let Some(usage) = delta.get("usage").or(evt.message.as_ref().and_then(|m| m.get("usage"))) {
+                                if let Some(usage) = &evt.usage {
+                                    output_tokens = usage
+                                        .get("output_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as u32;
+                                } else if let Some(delta) = &evt.delta {
+                                    if let Some(usage) = delta.get("usage") {
                                         output_tokens = usage
                                             .get("output_tokens")
                                             .and_then(|v| v.as_u64())
                                             .unwrap_or(0) as u32;
                                     }
+                                }
+                                if let Some(delta) = &evt.delta {
+                                    let stop_reason =
+                                        delta.get("stop_reason").and_then(|v| v.as_str());
                                     if let Some(reason) = stop_reason {
                                         let chunk = translate::make_stream_chunk(
                                             &chunk_id,
@@ -553,6 +560,7 @@ async fn handle_responses_http(
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
             let is_anthropic = provider_clone.provider_type == "anthropic";
+            let mut first_text = true;
 
             while let Some(chunk_result) = byte_stream.next().await {
                 let bytes = match chunk_result { Ok(b) => b, Err(_) => break };
@@ -569,16 +577,34 @@ async fn handle_responses_http(
                         };
                         match delta {
                             translate::StreamDelta::Text(text) => {
+                                if first_text {
+                                    first_text = false;
+                                    // Send output_item.added
+                                    let item_added = serde_json::json!({"type": "response.output_item.added", "output_index": 0, "item": {"id": &item_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}});
+                                    let _ = tx.send(Ok(Event::default().data(serde_json::to_string(&item_added).unwrap_or_default()))).await;
+                                    // Send content_part.added
+                                    let part_added = serde_json::json!({"type": "response.content_part.added", "item_id": &item_id, "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": ""}});
+                                    let _ = tx.send(Ok(Event::default().data(serde_json::to_string(&part_added).unwrap_or_default()))).await;
+                                }
                                 full_text.push_str(&text);
                                 let evt = serde_json::json!({"type": "response.output_text.delta", "item_id": &item_id, "output_index": 0, "content_index": 0, "delta": &text});
                                 let _ = tx.send(Ok(Event::default().data(serde_json::to_string(&evt).unwrap_or_default()))).await;
                             }
                             translate::StreamDelta::InputTokens(t) => input_tokens = t,
                             translate::StreamDelta::OutputTokens(t) => output_tokens = t,
+                            translate::StreamDelta::Usage(inp, out) => { input_tokens = inp; output_tokens = out; }
                             translate::StreamDelta::Done | translate::StreamDelta::Skip => {}
                         }
                     }
                 }
+            }
+
+            // Send content_part.done and output_item.done before completed
+            if !first_text {
+                let part_done = serde_json::json!({"type": "response.content_part.done", "item_id": &item_id, "output_index": 0, "content_index": 0, "part": {"type": "output_text", "text": &full_text}});
+                let _ = tx.send(Ok(Event::default().data(serde_json::to_string(&part_done).unwrap_or_default()))).await;
+                let item_done = serde_json::json!({"type": "response.output_item.done", "output_index": 0, "item": {"id": &item_id, "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": &full_text}]}});
+                let _ = tx.send(Ok(Event::default().data(serde_json::to_string(&item_done).unwrap_or_default()))).await;
             }
 
             let completed = serde_json::json!({
@@ -599,24 +625,50 @@ async fn handle_responses_http(
         return Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default()).into_response();
     }
 
-    let claude_resp: ClaudeResponse = match resp.json().await {
-        Ok(r) => r,
-        Err(e) => {
-            return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error": {"message": format!("Parse error: {}", e)}}))).into_response();
-        }
+    let is_anthropic = provider.provider_type == "anthropic";
+    let (full_text, usage) = if is_anthropic {
+        let claude_resp: ClaudeResponse = match resp.json().await {
+            Ok(r) => r,
+            Err(e) => {
+                return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error": {"message": format!("Parse Claude response error: {}", e)}}))).into_response();
+            }
+        };
+        let text = claude_resp.content.iter().filter(|b| b.block_type == "text").map(|b| b.text.as_str()).collect::<Vec<_>>().join("");
+        let u = OpenAIUsage { prompt_tokens: claude_resp.usage.input_tokens, completion_tokens: claude_resp.usage.output_tokens, total_tokens: claude_resp.usage.input_tokens + claude_resp.usage.output_tokens };
+        (text, u)
+    } else {
+        // OpenAI chat completions format
+        let openai_resp: serde_json::Value = match resp.json().await {
+            Ok(r) => r,
+            Err(e) => {
+                return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error": {"message": format!("Parse OpenAI response error: {}", e)}}))).into_response();
+            }
+        };
+        let text = openai_resp.get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|msg| msg.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        let u = OpenAIUsage {
+            prompt_tokens: openai_resp.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            completion_tokens: openai_resp.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            total_tokens: openai_resp.get("usage").and_then(|u| u.get("total_tokens")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        };
+        (text, u)
     };
 
-    let full_text = claude_resp.content.iter().filter(|b| b.block_type == "text").map(|b| b.text.as_str()).collect::<Vec<_>>().join("");
     let response_id = format!("resp-{}", uuid::Uuid::new_v4());
     let item_id = format!("item-{}", uuid::Uuid::new_v4());
     let latency = start.elapsed().as_millis() as u64;
-    let usage = OpenAIUsage { prompt_tokens: claude_resp.usage.input_tokens, completion_tokens: claude_resp.usage.output_tokens, total_tokens: claude_resp.usage.input_tokens + claude_resp.usage.output_tokens };
     record_success(&state, &provider, &req.model, &target_model, &usage, latency).await;
 
     Json(serde_json::json!({
         "id": response_id, "status": "completed", "model": &req.model,
         "output": [{"id": item_id, "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": full_text}]}],
-        "usage": {"input_tokens": claude_resp.usage.input_tokens, "output_tokens": claude_resp.usage.output_tokens, "total_tokens": claude_resp.usage.input_tokens + claude_resp.usage.output_tokens}
+        "usage": {"input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens, "total_tokens": usage.total_tokens}
     })).into_response()
 }
 
@@ -792,6 +844,7 @@ async fn handle_responses_ws(socket: WebSocket, state: SharedState) {
                         }
                         translate::StreamDelta::InputTokens(t) => input_tokens = t,
                         translate::StreamDelta::OutputTokens(t) => output_tokens = t,
+                        translate::StreamDelta::Usage(inp, out) => { input_tokens = inp; output_tokens = out; }
                         translate::StreamDelta::Done | translate::StreamDelta::Skip => {}
                     }
                 }

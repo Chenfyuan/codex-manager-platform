@@ -336,6 +336,18 @@ export async function proxyFetchRemoteModels(params: {
   return invoke("proxy_fetch_remote_models", params);
 }
 
+export async function proxyWriteCodexConfig(port: number, model: string): Promise<string> {
+  return invoke("proxy_write_codex_config", { port, model });
+}
+
+export async function proxyRestoreCodexConfig(): Promise<void> {
+  return invoke("proxy_restore_codex_config", {});
+}
+
+export async function proxyHasCodexBackup(): Promise<boolean> {
+  return invoke("proxy_has_codex_backup", {});
+}
+
 export async function getOperationLogs(limit?: number): Promise<OperationLog[]> {
   return invoke("get_operation_logs", { limit: limit ?? 50 });
 }

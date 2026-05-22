@@ -103,6 +103,10 @@ impl QuotaInfo {
 }
 
 pub fn check_quota_sync(credential: &str) -> QuotaInfo {
+    check_quota_sync_with_refresh(credential, false)
+}
+
+pub fn check_quota_sync_with_refresh(credential: &str, refresh_token: bool) -> QuotaInfo {
     let mut cmd = match crate::codex::cli::resolve_codex_cli() {
         Ok(cli) => cli.std_command(),
         Err(msg) => return QuotaInfo::error(msg),
@@ -122,16 +126,25 @@ pub fn check_quota_sync(credential: &str) -> QuotaInfo {
             return QuotaInfo::error(format!("写入临时凭证失败: {}", e));
         }
         cmd.env("CODEX_HOME", tmp_dir.path());
-        let result = run_quota_rpc(cmd);
+        let result = run_quota_rpc(cmd, refresh_token);
         drop(tmp_dir);
         result
     } else {
         cmd.env("CODEX_API_KEY", credential);
-        run_quota_rpc(cmd)
+        run_quota_rpc(cmd, refresh_token)
     }
 }
 
-fn run_quota_rpc(mut cmd: Command) -> QuotaInfo {
+fn account_read_request(refresh_token: bool) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "account/read",
+        "params": { "refreshToken": refresh_token }
+    })
+}
+
+fn run_quota_rpc(mut cmd: Command, refresh_token: bool) -> QuotaInfo {
     let child = cmd.spawn();
 
     let mut child = match child {
@@ -156,12 +169,7 @@ fn run_quota_rpc(mut cmd: Command) -> QuotaInfo {
             "clientInfo": { "name": "codex-manager", "version": "0.1.3" }
         }
     });
-    let account_msg = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "account/read",
-        "params": { "refreshToken": false }
-    });
+    let account_msg = account_read_request(refresh_token);
     let rate_msg = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 2,
@@ -263,6 +271,23 @@ fn run_quota_rpc(mut cmd: Command) -> QuotaInfo {
     }
 
     info
+}
+
+#[cfg(test)]
+mod tests {
+    use super::account_read_request;
+
+    #[test]
+    fn account_read_request_uses_disabled_refresh_by_default() {
+        let request = account_read_request(false);
+        assert_eq!(request["params"]["refreshToken"], false);
+    }
+
+    #[test]
+    fn account_read_request_can_force_refresh() {
+        let request = account_read_request(true);
+        assert_eq!(request["params"]["refreshToken"], true);
+    }
 }
 
 pub fn write_model_preference(model: &str) -> Result<(), String> {

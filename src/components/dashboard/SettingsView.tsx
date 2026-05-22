@@ -631,6 +631,8 @@ export function SettingsView({
                   auto_switch: "自动切换",
                   add_account: "添加账号",
                   remove_account: "删除账号",
+                  auth_recovered: "凭证恢复",
+                  account_downgraded: "会员降级",
                 };
                 const triggerLabels: Record<string, string> = {
                   manual: "手动",

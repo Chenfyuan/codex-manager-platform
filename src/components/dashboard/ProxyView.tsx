@@ -12,6 +12,8 @@ import {
   Power,
   Globe,
   Edit3,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Drawer } from "@/components/ui/Drawer";
 import {
@@ -25,6 +27,9 @@ import {
   proxyUpdateProvider,
   proxyReloadProviders,
   proxyFetchRemoteModels,
+  proxyWriteCodexConfig,
+  proxyRestoreCodexConfig,
+  proxyHasCodexBackup,
 } from "@/lib/tauri";
 import { useDialogKeyboard } from "@/hooks/useDialogKeyboard";
 import { toast } from "@/stores/toastStore";
@@ -63,6 +68,7 @@ function ProviderDialog({
   const [name, setName] = useState("");
   const [providerType, setProviderType] = useState("anthropic");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState("https://api.anthropic.com");
   const [models, setModels] = useState<ModelMapping[]>(PROVIDER_PRESETS.anthropic.models);
   const [saving, setSaving] = useState(false);
@@ -74,12 +80,14 @@ function ProviderDialog({
       setName(editProvider.name);
       setProviderType(editProvider.providerType);
       setApiKey(editProvider.apiKey);
+      setShowApiKey(false);
       setBaseUrl(editProvider.baseUrl);
       setModels([...editProvider.models]);
       setRemoteModels([]);
     } else if (open && !editProvider) {
       setName("");
       setApiKey("");
+      setShowApiKey(false);
       setBaseUrl(PROVIDER_PRESETS.anthropic.baseUrl);
       setModels([...PROVIDER_PRESETS.anthropic.models]);
       setRemoteModels([]);
@@ -239,13 +247,22 @@ function ProviderDialog({
 
           <div className="space-y-2">
             <label className="text-sm font-medium text-neutral-300">API Key</label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-ant-..."
-              className="w-full rounded-lg border border-white/[0.08] bg-surface-2 px-4 py-2.5 text-sm text-neutral-200 placeholder-neutral-500 outline-none transition-colors focus:border-primary-500"
-            />
+            <div className="relative">
+              <input
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="sk-ant-..."
+                className="w-full rounded-lg border border-white/[0.08] bg-surface-2 px-4 py-2.5 pr-10 text-sm text-neutral-200 placeholder-neutral-500 outline-none transition-colors focus:border-primary-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -342,17 +359,20 @@ export function ProxyView() {
   const [port, setPort] = useState("8766");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<ProxyProvider | null>(null);
+  const [hasBackup, setHasBackup] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [s, p, l] = await Promise.all([
+      const [s, p, l, bk] = await Promise.all([
         proxyGetStatus(),
         proxyGetProviders(),
         proxyGetLogs(30),
+        proxyHasCodexBackup(),
       ]);
       setStatus(s);
       setProviders(p);
       setLogs(l);
+      setHasBackup(bk);
     } catch (e) {
       toast("error", `加载代理状态失败: ${e}`);
     } finally {
@@ -516,6 +536,44 @@ export function ProxyView() {
             <button onClick={copyCommand} className="shrink-0 text-neutral-400 hover:text-neutral-200">
               <Copy size={14} />
             </button>
+          </div>
+        )}
+
+        {status?.running && providers.length > 0 && (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={async () => {
+                try {
+                  const firstModel = providers.find(p => p.enabled)?.models?.[0]?.from || "gpt-4o";
+                  const path = await proxyWriteCodexConfig(status.port, firstModel);
+                  setHasBackup(true);
+                  toast("success", `已写入 Codex 配置: ${path}`);
+                } catch (e) {
+                  toast("error", `写入失败: ${e}`);
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-surface-2 px-3 py-1.5 text-xs text-neutral-300 hover:border-primary-500/50 hover:text-primary-300 transition-colors"
+            >
+              <Power size={12} />
+              一键配置 Codex
+            </button>
+            {hasBackup && (
+              <button
+                onClick={async () => {
+                  try {
+                    await proxyRestoreCodexConfig();
+                    setHasBackup(false);
+                    toast("success", "已还原 Codex 配置");
+                  } catch (e) {
+                    toast("error", `还原失败: ${e}`);
+                  }
+                }}
+                className="flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-surface-2 px-3 py-1.5 text-xs text-neutral-300 hover:border-amber-500/50 hover:text-amber-300 transition-colors"
+              >
+                还原配置
+              </button>
+            )}
+            <span className="text-[10px] text-neutral-500">自动写入 ~/.codex/config.toml</span>
           </div>
         )}
 

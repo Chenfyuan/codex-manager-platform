@@ -3,8 +3,9 @@ import { useAccountStore } from "@/stores/accountStore";
 import { useUIStore } from "@/stores/uiStore";
 import { toast } from "@/stores/toastStore";
 import { activateAccount, checkAllQuotas, checkQuota, detectCodexCli, removeAccount, refreshOAuthToken, getQuotaHistory, getSetting, getRecommendedAccount, getTodaySwitchCount, getCodexProcesses, getAccountLaunchCommand, logOperation, reorderAccounts } from "@/lib/tauri";
-import { notifyTaskComplete, notifyQuotaWarning } from "@/lib/notifications";
+import { notifyTaskComplete, notifyTaskFailed, notifyQuotaWarning } from "@/lib/notifications";
 import { EditAccountDialog } from "@/components/accounts/EditAccountDialog";
+import { deriveAccountHealth, didLosePaidPlan, findBestHealthyAccount, formatLastCheckedAt, type DowngradeEvent } from "@/components/dashboard/accountHealth";
 import { reorderAccountIds } from "@/components/dashboard/accountOrder";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -28,6 +29,8 @@ import {
   Percent,
   ArrowLeftRight,
   Terminal,
+  Shield,
+  AlertTriangle,
 } from "lucide-react";
 
 const planLabels: Record<string, { text: string; color: string }> = {
@@ -40,6 +43,7 @@ const planLabels: Record<string, { text: string; color: string }> = {
 };
 
 const CODEX_PROCESS_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 function formatResetTime(resetsAt: number): string {
   const diffMins = Math.max(0, Math.round((resetsAt * 1000 - Date.now()) / 60000));
@@ -175,11 +179,64 @@ export function DashboardView() {
   const [codexRunning, setCodexRunning] = useState(false);
   const [codexProcesses, setCodexProcesses] = useState<CodexProcessInfo[]>([]);
   const [codexCliAvailable, setCodexCliAvailable] = useState<boolean | null>(null);
+  const [pollIntervalMs, setPollIntervalMs] = useState(DEFAULT_POLL_INTERVAL_MS);
+  const [quotaThreshold, setQuotaThreshold] = useState(95);
+  const [warningQuotaThreshold, setWarningQuotaThreshold] = useState(80);
+  const [autoHandlingEnabled, setAutoHandlingEnabled] = useState(true);
+  const [lastCheckedAt, setLastCheckedAt] = useState<Record<string, number>>({});
+  const [downgradeEvents, setDowngradeEvents] = useState<Record<string, DowngradeEvent>>({});
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const removeAccountFromStore = useAccountStore((s) => s.removeAccount);
+  const lastKnownPlanRef = useRef<Record<string, string>>({});
+  const lastCheckedAtRef = useRef<Record<string, number>>({});
+  const downgradeEventsRef = useRef<Record<string, DowngradeEvent>>({});
+  const authFailureNotifiedRef = useRef<Set<string>>(new Set());
+  const downgradeNotifiedRef = useRef<Set<string>>(new Set());
 
-    const handleActivate = async (accountId: string) => {
+  const updateCheckedTimestamp = (accountId: string, checkedAt: number) => {
+    lastCheckedAtRef.current = { ...lastCheckedAtRef.current, [accountId]: checkedAt };
+    setLastCheckedAt((current) => ({ ...current, [accountId]: checkedAt }));
+  };
+
+  const updateDowngradeEvent = (accountId: string, event: DowngradeEvent | null) => {
+    if (event == null) {
+      if (accountId in downgradeEventsRef.current) {
+        const next = { ...downgradeEventsRef.current };
+        delete next[accountId];
+        downgradeEventsRef.current = next;
+      }
+    } else {
+      downgradeEventsRef.current = { ...downgradeEventsRef.current, [accountId]: event };
+    }
+    setDowngradeEvents((current) => {
+      if (event == null) {
+        if (!(accountId in current)) return current;
+        const next = { ...current };
+        delete next[accountId];
+        return next;
+      }
+
+      const existing = current[accountId];
+      if (
+        existing?.fromPlan === event.fromPlan &&
+        existing?.toPlan === event.toPlan &&
+        existing?.detectedAt === event.detectedAt
+      ) {
+        return current;
+      }
+
+      return { ...current, [accountId]: event };
+    });
+  };
+
+  const rememberPlanType = (accountId: string, nextPlan: string) => {
+    const previousPlan = lastKnownPlanRef.current[accountId];
+    lastKnownPlanRef.current[accountId] = nextPlan;
+    return previousPlan;
+  };
+
+  const handleActivate = async (accountId: string) => {
     setActivating(accountId);
     try {
       await activateAccount(accountId);
@@ -202,8 +259,20 @@ export function DashboardView() {
 
     setRefreshingId(accountId);
     try {
+      const checkedAt = Date.now();
       const quota = await checkQuota(accountId);
       setQuota(accountId, quota);
+      updateCheckedTimestamp(accountId, checkedAt);
+      const previousPlan = rememberPlanType(accountId, quota.planType ?? "unknown");
+      if (didLosePaidPlan(previousPlan, quota.planType)) {
+        updateDowngradeEvent(accountId, {
+          fromPlan: previousPlan ?? "unknown",
+          toPlan: quota.planType,
+          detectedAt: checkedAt,
+        });
+      } else if (quota.planType && quota.planType !== "unknown") {
+        updateDowngradeEvent(accountId, null);
+      }
       if (quota.error) {
         toast("error", `额度查询出错: ${quota.error}`);
       } else {
@@ -305,125 +374,246 @@ export function DashboardView() {
   useEffect(() => {
     if (accounts.length === 0 || codexCliAvailable !== true) return;
 
+    let cancelled = false;
+
     const startPolling = async () => {
       const intervalSetting = await getSetting("poll_interval").catch(() => null);
-      const intervalMs = intervalSetting ? Number(intervalSetting) * 1000 : 5 * 60 * 1000;
+      const intervalMs = intervalSetting ? Number(intervalSetting) * 1000 : DEFAULT_POLL_INTERVAL_MS;
+      if (cancelled) return;
+      setPollIntervalMs(intervalMs);
 
       const poll = async () => {
-      const state = useAccountStore.getState();
-      if (state.quotaLoading) return;
-      setQuotaLoading(true);
-      try {
-        const results = await checkAllQuotas();
-        for (const [id, q] of results) setQuota(id, q);
+        const state = useAccountStore.getState();
+        if (state.quotaLoading || cancelled) return;
+        setQuotaLoading(true);
+        try {
+          const thresholdSetting = await getSetting("quota_threshold").catch(() => null);
+          const exhaustThreshold = thresholdSetting ? Number(thresholdSetting) : 95;
+          const warningThreshold = Math.max(50, exhaustThreshold - 15);
+          if (!cancelled) {
+            setQuotaThreshold(exhaustThreshold);
+            setWarningQuotaThreshold(warningThreshold);
+          }
 
-        const historyMap: Record<string, number[]> = {};
-        for (const [id] of results) {
-          try {
-            const h = await getQuotaHistory(id, 24);
-            historyMap[id] = h.map(([primary]) => 100 - primary);
-          } catch {}
-        }
-        setQuotaHistory(historyMap);
+          const notifySetting = await getSetting("notify_enabled").catch(() => null);
+          const notifyEnabled = notifySetting !== "false";
 
-        getTodaySwitchCount().then(setTodaySwitchCount).catch(() => {});
+          const autoSwitchSetting = await getSetting("auto_switch_enabled").catch(() => null);
+          const autoSwitchEnabled = autoSwitchSetting !== "false";
+          if (!cancelled) {
+            setAutoHandlingEnabled(autoSwitchEnabled);
+          }
 
-        // Auto-refresh OAuth tokens on error
-        const allAccounts = useAccountStore.getState().accounts;
-        for (const [id, q] of results) {
-          if (q.error) {
-            const acct = allAccounts.find((a) => a.id === id);
-            if (acct?.authMethod === "oauth") {
+          const strategySetting = await getSetting("schedule_strategy").catch(() => null);
+          const currentStrategy = strategySetting ?? "manual";
+
+          const allAccounts = useAccountStore.getState().accounts;
+          const accountMap = new Map(allAccounts.map((account) => [account.id, account]));
+          const checkedAt = Date.now();
+
+          const fetchedResults = await checkAllQuotas();
+          const results: Array<[string, typeof fetchedResults[number][1]]> = [];
+
+          for (const [id, initialQuota] of fetchedResults) {
+            let quota = initialQuota;
+            const account = accountMap.get(id);
+
+            if (quota.error && account?.authMethod === "oauth") {
               try {
                 await refreshOAuthToken(id);
+                quota = await checkQuota(id);
+                if (!quota.error) {
+                  authFailureNotifiedRef.current.delete(id);
+                  if (notifyEnabled) {
+                    notifyTaskComplete(account.name, "OAuth 凭证已自动恢复");
+                  }
+                  logOperation({
+                    action: "auth_recovered",
+                    toAccount: account.name,
+                    triggerType: "auto",
+                    detail: "OAuth credential refreshed automatically",
+                  }).catch(() => {});
+                }
               } catch {}
             }
+
+            results.push([id, quota]);
+            setQuota(id, quota);
+            updateCheckedTimestamp(id, checkedAt);
+
+            const previousPlan = rememberPlanType(id, quota.planType ?? "unknown");
+            if (didLosePaidPlan(previousPlan, quota.planType)) {
+              updateDowngradeEvent(id, {
+                fromPlan: previousPlan ?? "unknown",
+                toPlan: quota.planType,
+                detectedAt: checkedAt,
+              });
+              if (notifyEnabled && !downgradeNotifiedRef.current.has(id)) {
+                notifyTaskFailed(account?.name ?? id, `会员已降级为 ${planLabels[quota.planType]?.text ?? quota.planType ?? "未知"}`);
+                downgradeNotifiedRef.current.add(id);
+              }
+              logOperation({
+                action: "account_downgraded",
+                toAccount: account?.name ?? id,
+                triggerType: "auto",
+                detail: `${previousPlan ?? "unknown"} -> ${quota.planType}`,
+              }).catch(() => {});
+            } else if (quota.planType && quota.planType !== "unknown") {
+              updateDowngradeEvent(id, null);
+              downgradeNotifiedRef.current.delete(id);
+            }
           }
-        }
 
-        const currentActive = useAccountStore.getState().activeAccountId;
-        if (!currentActive) { setQuotaLoading(false); return; }
+          const historyMap: Record<string, number[]> = {};
+          for (const [id] of results) {
+            try {
+              const h = await getQuotaHistory(id, 24);
+              historyMap[id] = h.map(([primary]) => 100 - primary);
+            } catch {}
+          }
+          if (!cancelled) {
+            setQuotaHistory(historyMap);
+          }
 
-        const autoSwitchSetting = await getSetting("auto_switch_enabled").catch(() => null);
-        if (autoSwitchSetting === "false") { setQuotaLoading(false); return; }
+          getTodaySwitchCount().then(setTodaySwitchCount).catch(() => {});
 
-        const thresholdSetting = await getSetting("quota_threshold").catch(() => null);
-        const exhaustThreshold = thresholdSetting ? Number(thresholdSetting) : 95;
-        const warningThreshold = Math.max(50, exhaustThreshold - 15);
+          for (const [id, quota] of results) {
+            const account = accountMap.get(id);
+            if (quota.error) {
+              warnedRef.current.delete(id);
+              if (notifyEnabled && !authFailureNotifiedRef.current.has(id)) {
+                notifyTaskFailed(account?.name ?? id, quota.error);
+                authFailureNotifiedRef.current.add(id);
+              }
+              continue;
+            }
 
-        const notifySetting = await getSetting("notify_enabled").catch(() => null);
-        const notifyEnabled = notifySetting !== "false";
+            authFailureNotifiedRef.current.delete(id);
 
-        if (notifyEnabled) {
-          for (const [id, q] of results) {
-            if (q.error || q.primaryUsedPercent == null) continue;
-            const remaining = 100 - q.primaryUsedPercent;
-            if (q.primaryUsedPercent >= warningThreshold && q.primaryUsedPercent < exhaustThreshold && !warnedRef.current.has(id)) {
-              const acct = allAccounts.find((a) => a.id === id);
-              notifyQuotaWarning(acct?.name ?? id, Math.round(remaining));
+            if (quota.primaryUsedPercent == null) continue;
+            const remaining = 100 - quota.primaryUsedPercent;
+            if (
+              notifyEnabled &&
+              quota.primaryUsedPercent >= warningThreshold &&
+              quota.primaryUsedPercent < exhaustThreshold &&
+              !warnedRef.current.has(id)
+            ) {
+              notifyQuotaWarning(account?.name ?? id, Math.round(remaining));
               warnedRef.current.add(id);
             }
-            if (q.primaryUsedPercent < warningThreshold) {
+            if (quota.primaryUsedPercent < warningThreshold) {
               warnedRef.current.delete(id);
             }
           }
+
+          const currentActive = useAccountStore.getState().activeAccountId;
+          if (!currentActive) return;
+
+          const activeAccount = accountMap.get(currentActive);
+          const activeQuota = results.find(([id]) => id === currentActive)?.[1];
+          const activeHealth = activeAccount
+            ? deriveAccountHealth({
+                account: activeAccount,
+                quota: activeQuota,
+                lastCheckedAt: lastCheckedAtRef.current[currentActive],
+                pollIntervalMs: intervalMs,
+                warningThreshold,
+                exhaustThreshold,
+                downgrade: downgradeEventsRef.current[currentActive],
+              })
+            : null;
+
+          if (currentStrategy === "time_based") {
+            const recommended = await getRecommendedAccount("time_based").catch(() => null);
+            if (recommended && recommended !== currentActive) {
+              await activateAccount(recommended);
+              setActiveAccountId(recommended);
+              const account = accountMap.get(recommended);
+              notifyTaskComplete("时段调度", `已切换到 ${account?.name ?? recommended}`);
+              logOperation({ action: "switch_account", toAccount: account?.name ?? recommended, triggerType: "schedule" }).catch(() => {});
+            }
+            return;
+          }
+
+          if (!autoSwitchEnabled || !activeHealth?.autoHandleEligible) return;
+
+          let recommended =
+            currentStrategy !== "manual"
+              ? await getRecommendedAccount(currentStrategy).catch(() => null)
+              : null;
+
+          if (recommended) {
+            const candidateAccount = accountMap.get(recommended);
+            const candidateQuota = results.find(([id]) => id === recommended)?.[1];
+            const candidateHealth = candidateAccount
+              ? deriveAccountHealth({
+                  account: candidateAccount,
+                  quota: candidateQuota,
+                  lastCheckedAt: lastCheckedAtRef.current[recommended],
+                  pollIntervalMs: intervalMs,
+                  warningThreshold,
+                  exhaustThreshold,
+                  downgrade: downgradeEventsRef.current[recommended],
+                })
+              : null;
+
+            if (!candidateHealth || candidateHealth.requiresAttention || candidateHealth.kind === "exhausted") {
+              recommended = null;
+            }
+          }
+
+          if (!recommended) {
+            recommended = findBestHealthyAccount({
+              accounts: allAccounts,
+              quotas: Object.fromEntries(results),
+              activeAccountId: currentActive,
+              lastCheckedAt: lastCheckedAtRef.current,
+              downgradeEvents: downgradeEventsRef.current,
+              pollIntervalMs: intervalMs,
+              warningThreshold,
+              exhaustThreshold,
+              preferPaidPlan: activeHealth.kind === "downgraded",
+            });
+          }
+
+          if (!recommended || recommended === currentActive) return;
+
+          await activateAccount(recommended);
+          setActiveAccountId(recommended);
+          const nextAccount = accountMap.get(recommended);
+          const nextQuota = results.find(([id]) => id === recommended)?.[1];
+          const switchReason =
+            activeHealth.kind === "auth_error"
+              ? "认证异常"
+              : activeHealth.kind === "downgraded"
+                ? "会员降级"
+                : "额度耗尽";
+          notifyTaskComplete(
+            "自动切换账号",
+            `因${switchReason}切换到 ${nextAccount?.name ?? recommended}（剩余 ${100 - (nextQuota?.primaryUsedPercent ?? 0)}%）`,
+          );
+          logOperation({
+            action: "switch_account",
+            fromAccount: activeAccount?.name ?? currentActive,
+            toAccount: nextAccount?.name ?? recommended,
+            triggerType: "auto",
+            detail: switchReason,
+          }).catch(() => {});
+        } catch {}
+        finally {
+          setQuotaLoading(false);
         }
-
-        const activeQuota = results.find(([id]) => id === currentActive)?.[1];
-        const exhausted = activeQuota?.primaryUsedPercent != null && activeQuota.primaryUsedPercent >= exhaustThreshold;
-
-        const strategySetting = await getSetting("schedule_strategy").catch(() => null);
-        const currentStrategy = strategySetting ?? "manual";
-
-        if (currentStrategy === "time_based") {
-          const recommended = await getRecommendedAccount("time_based").catch(() => null);
-          if (recommended && recommended !== currentActive) {
-            await activateAccount(recommended);
-            setActiveAccountId(recommended);
-            const acct = accounts.find((a) => a.id === recommended);
-            notifyTaskComplete("时段调度", `已切换到 ${acct?.name ?? recommended}`);
-            logOperation({ action: "switch_account", toAccount: acct?.name ?? recommended, triggerType: "schedule" }).catch(() => {});
-          }
-        } else if (exhausted && currentStrategy !== "manual") {
-          const recommended = await getRecommendedAccount(currentStrategy).catch(() => null);
-          if (recommended && recommended !== currentActive) {
-            await activateAccount(recommended);
-            setActiveAccountId(recommended);
-            const acct = accounts.find((a) => a.id === recommended);
-            const recQuota = results.find(([id]) => id === recommended)?.[1];
-            notifyTaskComplete(
-              "自动切换账号",
-              `已切换到 ${acct?.name ?? recommended}（剩余 ${100 - (recQuota?.primaryUsedPercent ?? 0)}%）`,
-            );
-            logOperation({ action: "switch_account", toAccount: acct?.name ?? recommended, triggerType: "auto" }).catch(() => {});
-          }
-        } else if (exhausted) {
-          const best = results
-            .filter(([id, q]) => id !== currentActive && !q.error && q.primaryUsedPercent != null && q.primaryUsedPercent < 80)
-            .sort((a, b) => (a[1].primaryUsedPercent ?? 100) - (b[1].primaryUsedPercent ?? 100))[0];
-
-          if (best) {
-            const [bestId, bestQuota] = best;
-            await activateAccount(bestId);
-            setActiveAccountId(bestId);
-            const bestAccount = accounts.find((a) => a.id === bestId);
-            notifyTaskComplete(
-              "自动切换账号",
-              `已切换到 ${bestAccount?.name ?? bestId}（剩余 ${100 - (bestQuota.primaryUsedPercent ?? 0)}%）`,
-            );
-            logOperation({ action: "switch_account", toAccount: bestAccount?.name ?? bestId, triggerType: "auto" }).catch(() => {});
-          }
-        }
-      } catch {}
-      setQuotaLoading(false);
-    };
+      };
 
       poll();
       pollRef.current = setInterval(poll, intervalMs);
     };
 
     startPolling();
-    return () => clearInterval(pollRef.current);
+    return () => {
+      cancelled = true;
+      clearInterval(pollRef.current);
+    };
   }, [accounts.length, codexCliAvailable]);
 
   if (accounts.length === 0) {
@@ -486,16 +676,50 @@ export function DashboardView() {
   const visibleAccountIds = sorted.map((account) => account.id);
 
   const activeAccount = accounts.find((a) => a.id === activeAccountId);
-  const availableCount = accounts.filter((a) => {
-    const q = quotas[a.id];
-    return !q || !q.primaryUsedPercent || q.primaryUsedPercent < 95;
-  }).length;
   const avgRemaining = (() => {
     const withQuota = accounts.filter((a) => quotas[a.id]?.primaryUsedPercent != null);
     if (withQuota.length === 0) return null;
     const sum = withQuota.reduce((s, a) => s + (100 - (quotas[a.id]?.primaryUsedPercent ?? 0)), 0);
     return Math.round(sum / withQuota.length);
   })();
+  const accountHealth = Object.fromEntries(
+    accounts.map((account) => [
+      account.id,
+      deriveAccountHealth({
+        account,
+        quota: quotas[account.id],
+        lastCheckedAt: lastCheckedAt[account.id],
+        pollIntervalMs,
+        warningThreshold: warningQuotaThreshold,
+        exhaustThreshold: quotaThreshold,
+        downgrade: downgradeEvents[account.id],
+      }),
+    ]),
+  );
+  const availableCount = accounts.filter((account) => {
+    const health = accountHealth[account.id];
+    return health.kind === "healthy" || health.kind === "warning" || health.kind === "stale";
+  }).length;
+  const healthCounts = accounts.reduce(
+    (summary, account) => {
+      const health = accountHealth[account.id];
+      if (health.requiresAttention) {
+        summary.attention += 1;
+      } else if (health.kind === "warning") {
+        summary.warning += 1;
+      } else if (health.kind === "healthy") {
+        summary.healthy += 1;
+      } else {
+        summary.pending += 1;
+      }
+      return summary;
+    },
+    { healthy: 0, warning: 0, attention: 0, pending: 0 },
+  );
+  const latestCheckAt = Object.values(lastCheckedAt).reduce<number | null>((latest, timestamp) => {
+    if (latest == null || timestamp > latest) return timestamp;
+    return latest;
+  }, null);
 
   return (
     <div className="space-y-3">
@@ -535,6 +759,38 @@ export function DashboardView() {
             <p className="text-lg font-semibold tabular-nums text-neutral-200">{todaySwitchCount}</p>
             <p className="text-[10px] text-neutral-500">今日切换</p>
           </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.06] bg-surface-1 px-4 py-3 shadow-sm shadow-black/20">
+        <div className="flex items-center gap-2 text-sm font-medium text-neutral-200">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/15">
+            <Shield size={15} className="text-sky-400" />
+          </div>
+          账号健康中心
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">
+            {healthCounts.healthy} 健康
+          </span>
+          <span className="rounded-full border border-amber-400/25 bg-amber-500/10 px-2.5 py-1 text-amber-300">
+            {healthCounts.warning} 预警
+          </span>
+          <span className="rounded-full border border-rose-400/25 bg-rose-500/10 px-2.5 py-1 text-rose-300">
+            {healthCounts.attention} 需处理
+          </span>
+          {healthCounts.pending > 0 && (
+            <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-neutral-400">
+              {healthCounts.pending} 待检查
+            </span>
+          )}
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
+          <span className="flex items-center gap-1">
+            <AlertTriangle size={11} />
+            自动处理 {autoHandlingEnabled ? (healthCounts.attention > 0 ? "已接管异常账号" : "监控中") : "已关闭"}
+          </span>
+          <span>最近检查 {formatLastCheckedAt(latestCheckAt)}</span>
         </div>
       </div>
 
@@ -604,9 +860,10 @@ export function DashboardView() {
           const quota = quotas[account.id];
           const plan = quota?.planType ?? "unknown";
           const planCfg = planLabels[plan] ?? planLabels.unknown;
+          const health = accountHealth[account.id];
           const isActivating = activating === account.id;
           const isRefreshing = refreshingId === account.id;
-          const isExhausted = quota?.primaryUsedPercent != null && quota.primaryUsedPercent >= 95;
+          const isExhausted = health.kind === "exhausted";
 
           return (
             <div
@@ -676,6 +933,9 @@ export function DashboardView() {
                       <Crown size={8} />
                       {planCfg.text}
                     </span>
+                    <span className={`flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-px text-[10px] font-medium ${health.tone}`}>
+                      {health.label}
+                    </span>
                     {account.tag && (
                       <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-accent-400/25 bg-accent-500/10 px-1.5 py-px text-[10px] font-medium text-accent-400">
                         {account.tag}
@@ -693,6 +953,9 @@ export function DashboardView() {
                       {quota.email}
                     </p>
                   )}
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    {health.detail} · {formatLastCheckedAt(lastCheckedAt[account.id])}
+                  </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                   <button
