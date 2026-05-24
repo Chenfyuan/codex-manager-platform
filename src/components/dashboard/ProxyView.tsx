@@ -38,9 +38,11 @@ import type { ProxyProvider, ProxyStatus, ProxyLog, ModelMapping, RemoteModel } 
 
 // Codex 默认使用的模型名列表
 const CODEX_DEFAULT_MODELS = [
-  "claude-sonnet-4-20250514",
-  "claude-opus-4-20250515",
-  "claude-haiku-4-20250506",
+  "GPT-5.5",
+  "GPT-5.4",
+  "GPT-5.4-Mini",
+  "GPT-5.3-Codex",
+  "GPT-5.2",
 ];
 
 const PROVIDER_PRESETS: Record<string, { baseUrl: string; models: ModelMapping[] }> = {
