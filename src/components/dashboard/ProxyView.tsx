@@ -36,20 +36,27 @@ import { toast } from "@/stores/toastStore";
 import { useUIStore } from "@/stores/uiStore";
 import type { ProxyProvider, ProxyStatus, ProxyLog, ModelMapping, RemoteModel } from "@/lib/types";
 
+// Codex 默认使用的模型名列表
+const CODEX_DEFAULT_MODELS = [
+  "claude-sonnet-4-20250514",
+  "claude-opus-4-20250515",
+  "claude-haiku-4-20250506",
+];
+
 const PROVIDER_PRESETS: Record<string, { baseUrl: string; models: ModelMapping[] }> = {
   anthropic: {
     baseUrl: "https://api.anthropic.com",
     models: [
-      { from: "gpt-4o", to: "claude-sonnet-4-20250514" },
-      { from: "gpt-4", to: "claude-sonnet-4-20250514" },
-      { from: "o3", to: "claude-opus-4-20250515" },
-      { from: "claude-sonnet", to: "claude-sonnet-4-20250514" },
-      { from: "claude-opus", to: "claude-opus-4-20250515" },
+      { from: "claude-sonnet-4-20250514", to: "claude-sonnet-4-20250514" },
+      { from: "claude-opus-4-20250515", to: "claude-opus-4-20250515" },
     ],
   },
   openai: {
     baseUrl: "https://api.openai.com",
-    models: [],
+    models: [
+      { from: "claude-sonnet-4-20250514", to: "gpt-4o" },
+      { from: "claude-opus-4-20250515", to: "o3" },
+    ],
   },
 };
 
@@ -296,17 +303,20 @@ function ProviderDialog({
                 </button>
               </div>
             </div>
-            <p className="text-[11px] text-neutral-500">左侧填 Codex 请求的模型名，右侧选择/填写实际转发的模型</p>
+            <p className="text-[11px] text-neutral-500">左侧选择 Codex 使用的模型，右侧选择/填写实际转发的目标模型</p>
             <div className="max-h-48 space-y-2 overflow-y-auto">
               {models.map((m, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="text"
+                  <select
                     value={m.from}
                     onChange={(e) => handleModelChange(i, "from", e.target.value)}
-                    placeholder="请求模型名"
                     className="flex-1 rounded-md border border-white/[0.08] bg-surface-2 px-3 py-1.5 text-xs text-neutral-200 outline-none focus:border-primary-500"
-                  />
+                  >
+                    <option value="">选择 Codex 模型...</option>
+                    {CODEX_DEFAULT_MODELS.map((model) => (
+                      <option key={model} value={model}>{model}</option>
+                    ))}
+                  </select>
                   <ArrowRightLeft size={12} className="shrink-0 text-neutral-500" />
                   {remoteModels.length > 0 ? (
                     <select
